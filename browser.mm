@@ -46,23 +46,30 @@
 }
 
 - (void)loadURL:(id)sender {
-    NSString *query = [self.urlField stringValue];
-    std::string searchQuery = [query UTF8String];
+    NSString *input = [self.urlField stringValue];
+    if (input.length == 0) return;
+
+    // ПЕРЕВІРКА: Якщо ввели URL (починається з http або https) - йдемо в інтернет
+    if ([input hasPrefix:@"http://"] || [input hasPrefix:@"https://"]) {
+        NSURL *url = [NSURL URLWithString:input];
+        NSURLRequest *request = [NSURLRequest requestWithURL:url];
+        [self.webView loadRequest:request];
+        return; // Виходимо, щоб не шукати в базі
+    }
+
+    // ІНАКШЕ: Шукаємо в нашій локальній базі даних
+    std::string searchQuery = [input UTF8String];
 
     try {
-        // 1. Зберігаємо базу даних у папці "Документи" (де є права на запис)
+        // Шлях до БД у папці "Документи"
         NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
         NSString *documentsDirectory = [paths firstObject];
         NSString *dbPath = [documentsDirectory stringByAppendingPathComponent:@"products.db"];
         
-        std::cout << "Шлях до БД: " << [dbPath UTF8String] << std::endl; // Для дебагу в консолі
-
-        // 2. Працюємо з базою даних
         DatabaseManager db([dbPath UTF8String]);
-        db.initialize(); // Створить таблицю і додасть тестові дані
+        db.initialize(); 
         auto products = db.searchProducts(searchQuery);
 
-        // 3. Генеруємо HTML-рядок
         std::string html = "<html><head><meta charset='UTF-8'><style>";
         html += "body { font-family: -apple-system, sans-serif; padding: 20px; background: #f4f4f9; }";
         html += ".product { background: white; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }";
@@ -89,7 +96,6 @@
 
     } catch (const std::exception& e) {
         NSString *errorMsg = [NSString stringWithUTF8String:e.what()];
-        // ВИПРАВЛЕНО: Додано meta charset для коректного відображення української мови
         NSString *errorHtml = [NSString stringWithFormat:@"<html><head><meta charset='UTF-8'></head><body><h1>Помилка БД</h1><p>%@</p></body></html>", errorMsg];
         [self.webView loadHTMLString:errorHtml baseURL:nil];
     }
