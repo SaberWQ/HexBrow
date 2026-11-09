@@ -44,6 +44,9 @@ void DatabaseManager::initialize() {
                 sqlite3_exec(m_db, sqlInsert, nullptr, nullptr, nullptr);
             }
         }
+
+    sqlite3_exec(m_db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, username TEXT UNIQUE, password TEXT);", 0, 0, 0);
+    sqlite3_exec(m_db, "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY, url TEXT, title TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);", 0, 0, 0);
         sqlite3_finalize(stmt);
     }
 }
@@ -105,4 +108,39 @@ bool DatabaseManager::deleteProduct(int id) {
     bool success = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
     return success;
+}
+
+
+bool DatabaseManager::registerUser(const std::string& username, const std::string& password) {
+    // У реальному житті пароль треба хешувати! Для курсової зійде і так.
+    const char* sql = "INSERT INTO users (username, password) VALUES (?, ?);";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+bool DatabaseManager::loginUser(const std::string& username, const std::string& password) {
+    const char* sql = "SELECT id FROM users WHERE username = ? AND password = ?;";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+    bool success = (sqlite3_step(stmt) == SQLITE_ROW);
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+void DatabaseManager::addHistory(const std::string& url, const std::string& title) {
+    const char* sql = "INSERT INTO history (url, title) VALUES (?, ?);";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(stmt, 1, url.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, title.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+    }
 }

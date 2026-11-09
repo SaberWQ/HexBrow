@@ -4,125 +4,370 @@
 #include "src/NetworkManager.h"
 #include <string>
 
-@interface AppDelegate : NSObject <NSApplicationDelegate, NSTextFieldDelegate, NSSearchFieldDelegate, WKNavigationDelegate>
-@property (strong, nonatomic) NSWindow *window;
-@property (strong, nonatomic) WKWebView *webView;
-@property (strong, nonatomic) NSSearchField *searchField;
+@class BrowserWindowController;
+
+// ==========================================
+// 1. ОГОЛОШЕННЯ КЛАСІВ
+// ==========================================
+@interface LoginWindowController : NSWindowController
+@property (strong, nonatomic) NSTextField *userField;
+@property (strong, nonatomic) NSSecureTextField *passField;
 @end
 
-@implementation AppDelegate
+@interface BrowserWindowController : NSWindowController <WKNavigationDelegate, NSSearchFieldDelegate>
+@property (strong, nonatomic) NSView *topBar;
+@property (strong, nonatomic) NSSearchField *searchField;
+@property (strong, nonatomic) NSButton *backBtn;
+@property (strong, nonatomic) NSButton *forwardBtn;
+@property (strong, nonatomic) NSButton *reloadBtn;
+@property (strong, nonatomic) NSView *tabBarContainer;
+@property (strong, nonatomic) NSView *webViewContainer;
+@property (strong, nonatomic) NSMutableArray<WKWebView *> *webViews;
+@property (strong, nonatomic) NSMutableArray<NSButton *> *tabButtons;
+@property (nonatomic) NSInteger activeTabIndex;
+@end
 
-- (void)applicationDidFinishLaunching:(NSNotification *)aNotification {
-    // 1. Створюємо вікно
-    NSRect frame = NSMakeRect(0, 0, 1100, 800); // Трохи більший розмір за замовчуванням
-    self.window = [[NSWindow alloc] initWithContentRect:frame
-                                              styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable)
-                                                backing:NSBackingStoreBuffered
-                                                  defer:NO];
-    [self.window setTitle:@"HexBrow - Твій Розумний Браузер"];
-    [self.window center];
+static BrowserWindowController *mainBrowserWindow = nil;
 
-    NSView *contentView = self.window.contentView;
+// ==========================================
+// 2. ВІКНО АВТОРИЗАЦІЇ
+// ==========================================
+@implementation LoginWindowController
+- (instancetype)init {
+    NSRect frame = NSMakeRect(0, 0, 400, 300);
+    NSWindow *win = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
+    [win setTitle:@"Вхід у HexBrow"];
+    [win center];
+    self = [super initWithWindow:win];
+    if (self) {
+        NSView *view = win.contentView;
+        self.userField = [[NSTextField alloc] initWithFrame:NSMakeRect(50, 180, 300, 30)];
+        [self.userField setPlaceholderString:@"Логін"];
+        [view addSubview:self.userField];
 
-    // 2. Створюємо верхню панель (Toolbar) з Auto Layout
-    NSView *topBar = [[NSView alloc] init];
-    topBar.translatesAutoresizingMaskIntoConstraints = NO;
-    [topBar setWantsLayer:YES];
-    topBar.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
-    [contentView addSubview:topBar];
+        self.passField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(50, 130, 300, 30)];
+        [self.passField setPlaceholderString:@"Пароль"];
+        [view addSubview:self.passField];
 
-    // 3. Поле пошуку (як у Safari)
-    self.searchField = [[NSSearchField alloc] init];
-    self.searchField.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.searchField setPlaceholderString:@"Введіть запит або URL (напр., dell або https://google.com)"];
-    self.searchField.delegate = self;
-    [topBar addSubview:self.searchField];
+        NSButton *loginBtn = [[NSButton alloc] initWithFrame:NSMakeRect(50, 70, 140, 40)];
+        [loginBtn setTitle:@"Увійти"];
+        [loginBtn setTarget:self];
+        [loginBtn setAction:@selector(loginAction:)];
+        [view addSubview:loginBtn];
 
-    // 4. Кнопки
-    NSButton *localSearchBtn = [NSButton buttonWithTitle:@"Локально" target:self action:@selector(searchLocal:)];
-    localSearchBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    localSearchBtn.bezelStyle = NSBezelStyleRounded;
-    [topBar addSubview:localSearchBtn];
+        NSButton *regBtn = [[NSButton alloc] initWithFrame:NSMakeRect(210, 70, 140, 40)];
+        [regBtn setTitle:@"Реєстрація"];
+        [regBtn setTarget:self];
+        [regBtn setAction:@selector(registerAction:)];
+        [view addSubview:regBtn];
+    }
+    return self;
+}
 
-    NSButton *webSearchBtn = [NSButton buttonWithTitle:@"В Інтернеті" target:self action:@selector(searchInternet:)];
-    webSearchBtn.translatesAutoresizingMaskIntoConstraints = NO;
-    webSearchBtn.bezelStyle = NSBezelStyleRounded;
-    [topBar addSubview:webSearchBtn];
+- (void)loginAction:(id)sender {
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
+    DatabaseManager db(dbPath);
+    db.initialize();
 
-    // 5. WebView
-    self.webView = [[WKWebView alloc] init];
-    self.webView.translatesAutoresizingMaskIntoConstraints = NO;
-    self.webView.navigationDelegate = self;
-    [contentView addSubview:self.webView];
+    if (db.loginUser([self.userField.stringValue UTF8String], [self.passField.stringValue UTF8String])) {
+        [self.window close];
+        mainBrowserWindow = [[BrowserWindowController alloc] init];
+        [mainBrowserWindow showWindow:nil];
+    } else {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"Помилка"];
+        [alert setInformativeText:@"Невірний логін або пароль"];
+        [alert runModal];
+    }
+}
 
-    // 6. Налаштовуємо Auto Layout (обмеження)
-    [NSLayoutConstraint activateConstraints:@[
-        // TopBar прилипає до верху, лівого та правого краю
-        [topBar.topAnchor constraintEqualToAnchor:contentView.topAnchor],
-        [topBar.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor],
-        [topBar.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor],
-        [topBar.heightAnchor constraintEqualToConstant:60],
+- (void)registerAction:(id)sender {
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
+    DatabaseManager db(dbPath);
+    db.initialize();
 
-        // SearchField розтягується всередині TopBar
-        [self.searchField.leadingAnchor constraintEqualToAnchor:topBar.leadingAnchor constant:20],
-        [self.searchField.centerYAnchor constraintEqualToAnchor:topBar.centerYAnchor],
+    if (db.registerUser([self.userField.stringValue UTF8String], [self.passField.stringValue UTF8String])) {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"Успіх"];
+        [alert setInformativeText:@"Користувача створено! Тепер увійдіть."];
+        [alert runModal];
+    } else {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setMessageText:@"Помилка"];
+        [alert setInformativeText:@"Користувач вже існує"];
+        [alert runModal];
+    }
+}
+@end
+
+// ==========================================
+// 3. ГОЛОВНЕ ВІКНО БРАУЗЕРА
+// ==========================================
+@implementation BrowserWindowController
+
+- (instancetype)init {
+    NSRect frame = NSMakeRect(0, 0, 1200, 800);
+    NSWindow *win = [[NSWindow alloc] initWithContentRect:frame styleMask:(NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable) backing:NSBackingStoreBuffered defer:NO];
+    [win setTitle:@"HexBrow - Твій Розумний Браузер"];
+    [win center];
+    self = [super initWithWindow:win];
+    
+    if (self) {
+        self.webViews = [NSMutableArray array];
+        self.tabButtons = [NSMutableArray array];
+        self.activeTabIndex = -1;
         
-        // Кнопка "Локально"
-        [localSearchBtn.leadingAnchor constraintEqualToAnchor:self.searchField.trailingAnchor constant:10],
-        [localSearchBtn.centerYAnchor constraintEqualToAnchor:topBar.centerYAnchor],
-
-        // Кнопка "В Інтернеті"
-        [webSearchBtn.leadingAnchor constraintEqualToAnchor:localSearchBtn.trailingAnchor constant:10],
-        [webSearchBtn.trailingAnchor constraintEqualToAnchor:topBar.trailingAnchor constant:-20],
-        [webSearchBtn.centerYAnchor constraintEqualToAnchor:topBar.centerYAnchor],
-
-        // WebView займає весь простір під TopBar
-        [self.webView.topAnchor constraintEqualToAnchor:topBar.bottomAnchor],
-        [self.webView.leadingAnchor constraintEqualToAnchor:contentView.leadingAnchor],
-        [self.webView.trailingAnchor constraintEqualToAnchor:contentView.trailingAnchor],
-        [self.webView.bottomAnchor constraintEqualToAnchor:contentView.bottomAnchor]
-    ]];
-
-    // Початковий екран
-    [self showWelcomeScreen];
-    [self.window makeKeyAndOrderFront:nil];
+        NSView *content = win.contentView;
+        
+        // Панель вкладок
+        self.tabBarContainer = [[NSView alloc] init];
+        self.tabBarContainer.translatesAutoresizingMaskIntoConstraints = NO;
+        self.tabBarContainer.wantsLayer = YES;
+        self.tabBarContainer.layer.backgroundColor = [NSColor windowBackgroundColor].CGColor;
+        [content addSubview:self.tabBarContainer];
+        
+        // Панель навігації
+        self.topBar = [[NSView alloc] init];
+        self.topBar.translatesAutoresizingMaskIntoConstraints = NO;
+        [content addSubview:self.topBar];
+        
+        self.backBtn = [NSButton buttonWithTitle:@"◀" target:self action:@selector(goBack:)];
+        self.backBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        self.backBtn.enabled = NO;
+        [self.topBar addSubview:self.backBtn];
+        
+        self.forwardBtn = [NSButton buttonWithTitle:@"▶" target:self action:@selector(goForward:)];
+        self.forwardBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        self.forwardBtn.enabled = NO;
+        [self.topBar addSubview:self.forwardBtn];
+        
+        self.reloadBtn = [NSButton buttonWithTitle:@"⟳" target:self action:@selector(reloadPage:)];
+        self.reloadBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.topBar addSubview:self.reloadBtn];
+        
+        self.searchField = [[NSSearchField alloc] init];
+        self.searchField.translatesAutoresizingMaskIntoConstraints = NO;
+        self.searchField.delegate = self;
+        self.searchField.placeholderString = @"Введіть запит або URL...";
+        [self.topBar addSubview:self.searchField];
+        
+        NSButton *localBtn = [NSButton buttonWithTitle:@"Локально" target:self action:@selector(searchLocal:)];
+        localBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.topBar addSubview:localBtn];
+        
+        NSButton *webBtn = [NSButton buttonWithTitle:@"В Інтернеті" target:self action:@selector(searchInternet:)];
+        webBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.topBar addSubview:webBtn];
+        
+        // Кнопка "+"
+        NSButton *newTabBtn = [NSButton buttonWithTitle:@"+" target:self action:@selector(addNewTab:)];
+        newTabBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        newTabBtn.font = [NSFont boldSystemFontOfSize:18];
+        [self.topBar addSubview:newTabBtn];
+        
+        // Кнопка "✖" (Закрити вкладку)
+        NSButton *closeTabBtn = [NSButton buttonWithTitle:@"✖" target:self action:@selector(closeTab:)];
+        closeTabBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        closeTabBtn.font = [NSFont boldSystemFontOfSize:14];
+        [self.topBar addSubview:closeTabBtn];
+        
+        // Контейнер для веб-сторінок
+        self.webViewContainer = [[NSView alloc] init];
+        self.webViewContainer.translatesAutoresizingMaskIntoConstraints = NO;
+        [content addSubview:self.webViewContainer];
+        
+        [NSLayoutConstraint activateConstraints:@[
+            [self.tabBarContainer.topAnchor constraintEqualToAnchor:content.topAnchor],
+            [self.tabBarContainer.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+            [self.tabBarContainer.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+            [self.tabBarContainer.heightAnchor constraintEqualToConstant:35],
+            
+            [self.topBar.topAnchor constraintEqualToAnchor:self.tabBarContainer.bottomAnchor],
+            [self.topBar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+            [self.topBar.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+            [self.topBar.heightAnchor constraintEqualToConstant:50],
+            
+            [self.backBtn.leadingAnchor constraintEqualToAnchor:self.topBar.leadingAnchor constant:10],
+            [self.backBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            [self.backBtn.widthAnchor constraintEqualToConstant:30],
+            
+            [self.forwardBtn.leadingAnchor constraintEqualToAnchor:self.backBtn.trailingAnchor constant:5],
+            [self.forwardBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            [self.forwardBtn.widthAnchor constraintEqualToConstant:30],
+            
+            [self.reloadBtn.leadingAnchor constraintEqualToAnchor:self.forwardBtn.trailingAnchor constant:5],
+            [self.reloadBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            [self.reloadBtn.widthAnchor constraintEqualToConstant:30],
+            
+            [self.searchField.leadingAnchor constraintEqualToAnchor:self.reloadBtn.trailingAnchor constant:10],
+            [self.searchField.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            
+            [localBtn.leadingAnchor constraintEqualToAnchor:self.searchField.trailingAnchor constant:10],
+            [localBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            
+            [webBtn.leadingAnchor constraintEqualToAnchor:localBtn.trailingAnchor constant:5],
+            [webBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            
+            [newTabBtn.leadingAnchor constraintEqualToAnchor:webBtn.trailingAnchor constant:10],
+            [newTabBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            [newTabBtn.widthAnchor constraintEqualToConstant:30],
+            
+            [closeTabBtn.leadingAnchor constraintEqualToAnchor:newTabBtn.trailingAnchor constant:5],
+            [closeTabBtn.trailingAnchor constraintEqualToAnchor:self.topBar.trailingAnchor constant:-10],
+            [closeTabBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            [closeTabBtn.widthAnchor constraintEqualToConstant:30],
+            
+            [self.webViewContainer.topAnchor constraintEqualToAnchor:self.topBar.bottomAnchor],
+            [self.webViewContainer.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+            [self.webViewContainer.trailingAnchor constraintEqualToAnchor:content.trailingAnchor],
+            [self.webViewContainer.bottomAnchor constraintEqualToAnchor:content.bottomAnchor]
+        ]];
+        
+        [self addNewTab:nil];
+    }
+    return self;
 }
 
-- (void)showWelcomeScreen {
-    std::string html = R"(
-        <html><head><meta charset='UTF-8'>
-        <style>
-            body { font-family: -apple-system, sans-serif; background: #1e1e2e; color: white; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-            h1 { font-size: 40px; background: linear-gradient(90deg, #89b4fa, #b4befe); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        </style>
-        </head><body><h1>Ласкаво просимо до HexBrow</h1></body></html>
-    )";
-    [self.webView loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:nil];
+- (void)addNewTab:(id)sender {
+    WKWebView *webView = [[WKWebView alloc] initWithFrame:self.webViewContainer.bounds];
+    webView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    webView.navigationDelegate = self;
+    
+    [webView addObserver:self forKeyPath:@"canGoBack" options:NSKeyValueObservingOptionNew context:nil];
+    [webView addObserver:self forKeyPath:@"canGoForward" options:NSKeyValueObservingOptionNew context:nil];
+    [webView addObserver:self forKeyPath:@"URL" options:NSKeyValueObservingOptionNew context:nil];
+    [webView addObserver:self forKeyPath:@"title" options:NSKeyValueObservingOptionNew context:nil];
+    
+    [self.webViews addObject:webView];
+    [self.webViewContainer addSubview:webView];
+    
+    NSButton *tabBtn = [NSButton buttonWithTitle:@"Нова вкладка" target:self action:@selector(switchTab:)];
+    tabBtn.bezelStyle = NSBezelStyleRounded;
+    [self.tabButtons addObject:tabBtn];
+    [self.tabBarContainer addSubview:tabBtn];
+    
+    [self switchTab:tabBtn];
+    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://www.google.com"]]];
+    [self layoutTabs];
 }
 
-// Обробка натискання Enter
+- (void)closeTab:(id)sender {
+    if (self.activeTabIndex < 0) return;
+    
+    NSInteger indexToRemove = self.activeTabIndex;
+    WKWebView *webViewToRemove = self.webViews[indexToRemove];
+    NSButton *buttonToRemove = self.tabButtons[indexToRemove];
+    
+    @try {
+        [webViewToRemove removeObserver:self forKeyPath:@"canGoBack"];
+        [webViewToRemove removeObserver:self forKeyPath:@"canGoForward"];
+        [webViewToRemove removeObserver:self forKeyPath:@"URL"];
+        [webViewToRemove removeObserver:self forKeyPath:@"title"];
+    } @catch (NSException *exception) {}
+    
+    [webViewToRemove removeFromSuperview];
+    [buttonToRemove removeFromSuperview];
+    [self.webViews removeObjectAtIndex:indexToRemove];
+    [self.tabButtons removeObjectAtIndex:indexToRemove];
+    
+    if (self.webViews.count == 0) {
+        [self addNewTab:nil];
+    } else {
+        if (indexToRemove >= self.webViews.count) {
+            indexToRemove = self.webViews.count - 1;
+        }
+        [self switchTab:self.tabButtons[indexToRemove]];
+    }
+    [self layoutTabs];
+}
+
+- (void)switchTab:(NSButton *)sender {
+    NSInteger index = [self.tabButtons indexOfObject:sender];
+    if (index == NSNotFound) return;
+    
+    for (WKWebView *wv in self.webViews) { wv.hidden = YES; }
+    
+    WKWebView *activeWebView = self.webViews[index];
+    activeWebView.hidden = NO;
+    self.activeTabIndex = index;
+    
+    self.searchField.stringValue = activeWebView.URL.absoluteString ?: @"";
+    [self updateNavButtons:activeWebView];
+}
+
+- (void)updateNavButtons:(WKWebView *)webView {
+    self.backBtn.enabled = webView.canGoBack;
+    self.forwardBtn.enabled = webView.canGoForward;
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
+    if ([object isKindOfClass:[WKWebView class]]) {
+        WKWebView *webView = (WKWebView *)object;
+        if (self.activeTabIndex >= 0 && self.activeTabIndex < self.webViews.count && webView == self.webViews[self.activeTabIndex]) {
+            [self updateNavButtons:webView];
+            
+            if ([keyPath isEqualToString:@"URL"] && webView.URL) {
+                NSString *urlString = webView.URL.absoluteString;
+                if (![urlString containsString:@"hexbrow.local"] && ![urlString isEqualToString:@"about:blank"]) {
+                    self.searchField.stringValue = urlString;
+                }
+            }
+            if ([keyPath isEqualToString:@"title"] && webView.title) {
+                NSButton *tabBtn = self.tabButtons[self.activeTabIndex];
+                if (webView.title.length > 15) {
+                    tabBtn.title = [[webView.title substringToIndex:15] stringByAppendingString:@"..."];
+                } else {
+                    tabBtn.title = webView.title;
+                }
+                [self layoutTabs];
+            }
+        }
+    }
+}
+
+- (void)layoutTabs {
+    CGFloat xOffset = 10;
+    for (NSButton *btn in self.tabButtons) {
+        [btn sizeToFit];
+        CGFloat width = MAX(btn.frame.size.width + 20, 100);
+        if (width > 200) width = 200;
+        btn.frame = NSMakeRect(xOffset, 5, width, 25);
+        xOffset += width + 5;
+    }
+}
+
+- (void)goBack:(id)sender { if(self.activeTabIndex >= 0) [self.webViews[self.activeTabIndex] goBack]; }
+- (void)goForward:(id)sender { if(self.activeTabIndex >= 0) [self.webViews[self.activeTabIndex] goForward]; }
+- (void)reloadPage:(id)sender { if(self.activeTabIndex >= 0) [self.webViews[self.activeTabIndex] reload]; }
+
 - (void)controlTextDidEndEditing:(NSNotification *)obj {
     NSString *input = self.searchField.stringValue;
+    if (self.activeTabIndex < 0 || input.length == 0) return;
+    
+    WKWebView *currentView = self.webViews[self.activeTabIndex];
+    
     if ([input hasPrefix:@"http://"] || [input hasPrefix:@"https://"]) {
-        [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:input]]];
+        [currentView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:input]]];
     } else {
         [self searchLocal:nil];
     }
 }
 
-// ЛОКАЛЬНИЙ ПОШУК (SQLite)
 - (void)searchLocal:(id)sender {
+    if (self.activeTabIndex < 0) return;
     std::string query = [self.searchField.stringValue UTF8String];
-    
+    if (query.find("http") != std::string::npos) query = ""; 
+
     try {
         NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-        NSString *dbPath = [[paths firstObject] stringByAppendingPathComponent:@"products.db"];
+        std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
         
-        DatabaseManager db([dbPath UTF8String]);
+        DatabaseManager db(dbPath);
         db.initialize(); 
         auto products = db.searchProducts(query);
 
-        // Сучасний HTML/CSS дизайн (Grid/Flexbox)
         std::string html = R"(
             <html><head><meta charset='UTF-8'>
             <style>
@@ -152,19 +397,19 @@
             }
         }
         html += "</div></body></html>";
-        [self.webView loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:nil];
+        
+        [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:nil];
 
     } catch (const std::exception& e) {
-        [self.webView loadHTMLString:[NSString stringWithFormat:@"<h1>Помилка: %s</h1>", e.what()] baseURL:nil];
+        [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithFormat:@"<h1>Помилка: %s</h1>", e.what()] baseURL:nil];
     }
 }
 
-// ПОШУК В ІНТЕРНЕТІ (libcurl + JSON)
 - (void)searchInternet:(id)sender {
+    if (self.activeTabIndex < 0) return;
     NSString *query = self.searchField.stringValue;
+    if ([query containsString:@"http"]) query = @"";
     if (query.length == 0) return;
-
-    [self.webView loadHTMLString:@"<html><body style='font-family:-apple-system; display:flex; justify-content:center; align-items:center; height:100vh;'><h1>Шукаємо в інтернеті... 🌐</h1></body></html>" baseURL:nil];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         std::vector<Product> products = NetworkManager::fetchInternetProducts([query UTF8String]);
@@ -194,7 +439,6 @@
         } else {
             for (const auto& p : products) {
                 html += "<div class='card'>";
-                // Використовуємо зображення з API (передаємо його через NetworkManager)
                 html += "<img src='" + p.imageUrl + "' alt='product'>";
                 html += "<div class='card-content'>";
                 html += "<div class='brand'>" + p.manufacturer + "</div>";
@@ -207,22 +451,44 @@
         html += "</div></body></html>";
 
         dispatch_async(dispatch_get_main_queue(), ^{
-            [self.webView loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:nil];
+            if (self.activeTabIndex >= 0) {
+                [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:nil];
+            }
         });
     });
 }
 
-- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender {
-    return YES;
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    NSString *url = webView.URL.absoluteString;
+    NSString *title = webView.title;
+    if (url && ![url containsString:@"hexbrow.local"] && ![url isEqualToString:@"about:blank"]) {
+        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+        std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
+        DatabaseManager db(dbPath);
+        db.addHistory([url UTF8String], [title UTF8String]);
+    }
 }
 
+- (void)dealloc {
+    for (WKWebView *webView in self.webViews) {
+        @try {
+            [webView removeObserver:self forKeyPath:@"canGoBack"];
+            [webView removeObserver:self forKeyPath:@"canGoForward"];
+            [webView removeObserver:self forKeyPath:@"URL"];
+            [webView removeObserver:self forKeyPath:@"title"];
+        } @catch (NSException *exception) {}
+    }
+}
 @end
 
+// ==========================================
+// 4. ГОЛОВНА ФУНКЦІЯ
+// ==========================================
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
         NSApplication *app = [NSApplication sharedApplication];
-        AppDelegate *delegate = [[AppDelegate alloc] init];
-        [app setDelegate:delegate];
+        LoginWindowController *login = [[LoginWindowController alloc] init];
+        [login showWindow:nil];
         [app run];
     }
     return 0;
