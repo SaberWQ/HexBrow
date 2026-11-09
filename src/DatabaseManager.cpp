@@ -79,3 +79,30 @@ std::vector<Product> DatabaseManager::searchProducts(const std::string& query) c
     sqlite3_finalize(stmt);
     return results;
 }
+
+
+bool DatabaseManager::addProduct(const Product& product) {
+    const char* sql = "INSERT INTO products (name, code, manufacturer, description) VALUES (?, ?, ?, ?);";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+
+    sqlite3_bind_text(stmt, 1, product.name.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, product.code.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 3, product.manufacturer.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 4, product.description.c_str(), -1, SQLITE_STATIC);
+
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return success;
+}
+
+bool DatabaseManager::deleteProduct(int id) {
+    const char* sql = "DELETE FROM products WHERE id = ?;";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
+
+    sqlite3_bind_int(stmt, 1, id);
+    bool success = (sqlite3_step(stmt) == SQLITE_DONE);
+    sqlite3_finalize(stmt);
+    return success;
+}
