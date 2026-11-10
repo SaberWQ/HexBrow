@@ -2,6 +2,9 @@
 #include <curl/curl.h>
 #include "json.hpp"
 #include <iostream>
+#include <algorithm>
+#include <sstream>
+#include <iomanip> // Для форматування ціни
 
 using json = nlohmann::json;
 
@@ -16,7 +19,9 @@ std::vector<Product> NetworkManager::fetchInternetProducts(const std::string& qu
     std::string readBuffer;
 
     if (curl) {
-        std::string url = "https://dummyjson.com/products/search?q=" + query;
+        std::string url = "https://dummyjson.com/products?limit=100";
+        if (!query.empty()) url = "https://dummyjson.com/products/search?q=" + query + "&limit=100";
+
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
@@ -28,23 +33,30 @@ std::vector<Product> NetworkManager::fetchInternetProducts(const std::string& qu
                 if (j.contains("products")) {
                     for (auto& item : j["products"]) {
                         Product p;
-                        p.id = item.value("id", 0);
+                        p.id = 0;
                         p.name = item.value("title", "Unknown");
-                        p.code = "INT-" + std::to_string(p.id);
-                        p.manufacturer = item.value("brand", "Generic");
+                        p.code = "INT-" + std::to_string(item.value("id", 0));
+                        p.manufacturer = item.value("brand", "Internet Brand");
                         p.description = item.value("description", "");
-                        
-                        // Нові поля
                         p.imageUrl = item.value("thumbnail", "");
-                        p.price = std::to_string(item.value("price", 0.0));
-                        p.link = "https://dummyjson.com/products/" + std::to_string(p.id);
                         
+                        // ФОРМАТУВАННЯ ЦІНИ (2 знаки після коми)
+                        double rawPrice = item.value("price", 0.0);
+                        std::stringstream ss;
+                        ss << std::fixed << std::setprecision(2) << rawPrice;
+                        p.price = ss.str();
+
+                        // ГЛОБАЛЬНИЙ ПОШУК (Google)
+                        std::string searchQuery = p.manufacturer + " " + p.name;
+                        // Замінюємо пробіли на плюси
+                        std::replace(searchQuery.begin(), searchQuery.end(), ' ', '+');
+                        p.link = "https://www.google.com/search?q=" + searchQuery + "+buy";
+
+                        p.isFavorite = 0;
                         results.push_back(p);
                     }
                 }
-            } catch (const std::exception& e) {
-                std::cerr << "JSON Error: " << e.what() << std::endl;
-            }
+            } catch (const std::exception& e) { std::cerr << "JSON Error" << std::endl; }
         }
         curl_easy_cleanup(curl);
     }

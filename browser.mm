@@ -2,6 +2,7 @@
 #import <WebKit/WebKit.h>
 #include "src/DatabaseManager.h" 
 #include "src/NetworkManager.h"
+#include "src/HtmlGenerator.h"
 #include <string>
 
 @class BrowserWindowController;
@@ -12,9 +13,10 @@
 @interface LoginWindowController : NSWindowController
 @property (strong, nonatomic) NSTextField *userField;
 @property (strong, nonatomic) NSSecureTextField *passField;
+@property (strong, nonatomic) NSButton *rememberCheckbox;
 @end
 
-@interface BrowserWindowController : NSWindowController <WKNavigationDelegate, NSSearchFieldDelegate>
+@interface BrowserWindowController : NSWindowController <WKNavigationDelegate, NSSearchFieldDelegate, WKScriptMessageHandler, WKUIDelegate>
 @property (strong, nonatomic) NSView *topBar;
 @property (strong, nonatomic) NSSearchField *searchField;
 @property (strong, nonatomic) NSButton *backBtn;
@@ -30,32 +32,54 @@
 static BrowserWindowController *mainBrowserWindow = nil;
 
 // ==========================================
+// ДОПОМІЖНА ФУНКЦІЯ ДЛЯ ШЛЯХУ ДО БД
+// ==========================================
+NSString* getProjectDbPath() {
+    NSString *exePath = [[NSBundle mainBundle] executablePath];
+    // Шлях: HexBrow.app/Contents/MacOS/HexBrow -> піднімаємось на 3 рівні вгору до кореня проєкту
+    NSString *macOSDir = [exePath stringByDeletingLastPathComponent]; // MacOS
+    NSString *contentsDir = [macOSDir stringByDeletingLastPathComponent]; // Contents
+    NSString *appDir = [contentsDir stringByDeletingLastPathComponent]; // HexBrow.app
+    NSString *rootDir = [appDir stringByDeletingLastPathComponent]; // Корінь проєкту (HexBrow)
+    
+    return [rootDir stringByAppendingPathComponent:@"products.db"];
+}
+
+// ==========================================
 // 2. ВІКНО АВТОРИЗАЦІЇ
 // ==========================================
 @implementation LoginWindowController
 - (instancetype)init {
-    NSRect frame = NSMakeRect(0, 0, 400, 300);
+    NSRect frame = NSMakeRect(0, 0, 400, 350);
     NSWindow *win = [[NSWindow alloc] initWithContentRect:frame styleMask:NSWindowStyleMaskTitled backing:NSBackingStoreBuffered defer:NO];
     [win setTitle:@"Вхід у HexBrow"];
     [win center];
     self = [super initWithWindow:win];
     if (self) {
         NSView *view = win.contentView;
-        self.userField = [[NSTextField alloc] initWithFrame:NSMakeRect(50, 180, 300, 30)];
+        NSString *savedUser = [[NSUserDefaults standardUserDefaults] stringForKey:@"SavedUsername"];
+        
+        self.userField = [[NSTextField alloc] initWithFrame:NSMakeRect(50, 200, 300, 30)];
         [self.userField setPlaceholderString:@"Логін"];
+        if (savedUser) [self.userField setStringValue:savedUser];
         [view addSubview:self.userField];
 
-        self.passField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(50, 130, 300, 30)];
+        self.passField = [[NSSecureTextField alloc] initWithFrame:NSMakeRect(50, 150, 300, 30)];
         [self.passField setPlaceholderString:@"Пароль"];
         [view addSubview:self.passField];
 
-        NSButton *loginBtn = [[NSButton alloc] initWithFrame:NSMakeRect(50, 70, 140, 40)];
+        self.rememberCheckbox = [NSButton checkboxWithTitle:@"Запам'ятати мене" target:nil action:nil];
+        [self.rememberCheckbox setFrame:NSMakeRect(50, 110, 200, 30)];
+        if (savedUser) [self.rememberCheckbox setState:NSControlStateValueOn];
+        [view addSubview:self.rememberCheckbox];
+
+        NSButton *loginBtn = [[NSButton alloc] initWithFrame:NSMakeRect(50, 60, 140, 40)];
         [loginBtn setTitle:@"Увійти"];
         [loginBtn setTarget:self];
         [loginBtn setAction:@selector(loginAction:)];
         [view addSubview:loginBtn];
 
-        NSButton *regBtn = [[NSButton alloc] initWithFrame:NSMakeRect(210, 70, 140, 40)];
+        NSButton *regBtn = [[NSButton alloc] initWithFrame:NSMakeRect(210, 60, 140, 40)];
         [regBtn setTitle:@"Реєстрація"];
         [regBtn setTarget:self];
         [regBtn setAction:@selector(registerAction:)];
@@ -65,8 +89,14 @@ static BrowserWindowController *mainBrowserWindow = nil;
 }
 
 - (void)loginAction:(id)sender {
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
+    if (self.rememberCheckbox.state == NSControlStateValueOn) {
+        [[NSUserDefaults standardUserDefaults] setObject:self.userField.stringValue forKey:@"SavedUsername"];
+    } else {
+        [[NSUserDefaults standardUserDefaults] removeObjectForKey:@"SavedUsername"];
+    }
+    [[NSUserDefaults standardUserDefaults] synchronize];
+
+    std::string dbPath = [getProjectDbPath() UTF8String];
     DatabaseManager db(dbPath);
     db.initialize();
 
@@ -83,8 +113,7 @@ static BrowserWindowController *mainBrowserWindow = nil;
 }
 
 - (void)registerAction:(id)sender {
-    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-    std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
+    std::string dbPath = [getProjectDbPath() UTF8String];
     DatabaseManager db(dbPath);
     db.initialize();
 
@@ -146,7 +175,7 @@ static BrowserWindowController *mainBrowserWindow = nil;
         self.reloadBtn = [NSButton buttonWithTitle:@"⟳" target:self action:@selector(reloadPage:)];
         self.reloadBtn.translatesAutoresizingMaskIntoConstraints = NO;
         [self.topBar addSubview:self.reloadBtn];
-        
+
         self.searchField = [[NSSearchField alloc] init];
         self.searchField.translatesAutoresizingMaskIntoConstraints = NO;
         self.searchField.delegate = self;
@@ -156,18 +185,24 @@ static BrowserWindowController *mainBrowserWindow = nil;
         NSButton *localBtn = [NSButton buttonWithTitle:@"Локально" target:self action:@selector(searchLocal:)];
         localBtn.translatesAutoresizingMaskIntoConstraints = NO;
         [self.topBar addSubview:localBtn];
+
+        NSButton *catalogBtn = [NSButton buttonWithTitle:@"Каталог" target:self action:@selector(showCatalog:)];
+        catalogBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.topBar addSubview:catalogBtn];
+
+        NSButton *favBtn = [NSButton buttonWithTitle:@"⭐ Обрані" target:self action:@selector(showFavorites:)];
+        favBtn.translatesAutoresizingMaskIntoConstraints = NO;
+        [self.topBar addSubview:favBtn];
         
         NSButton *webBtn = [NSButton buttonWithTitle:@"В Інтернеті" target:self action:@selector(searchInternet:)];
         webBtn.translatesAutoresizingMaskIntoConstraints = NO;
         [self.topBar addSubview:webBtn];
         
-        // Кнопка "+"
         NSButton *newTabBtn = [NSButton buttonWithTitle:@"+" target:self action:@selector(addNewTab:)];
         newTabBtn.translatesAutoresizingMaskIntoConstraints = NO;
         newTabBtn.font = [NSFont boldSystemFontOfSize:18];
         [self.topBar addSubview:newTabBtn];
         
-        // Кнопка "✖" (Закрити вкладку)
         NSButton *closeTabBtn = [NSButton buttonWithTitle:@"✖" target:self action:@selector(closeTab:)];
         closeTabBtn.translatesAutoresizingMaskIntoConstraints = NO;
         closeTabBtn.font = [NSFont boldSystemFontOfSize:14];
@@ -207,7 +242,13 @@ static BrowserWindowController *mainBrowserWindow = nil;
             [localBtn.leadingAnchor constraintEqualToAnchor:self.searchField.trailingAnchor constant:10],
             [localBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
             
-            [webBtn.leadingAnchor constraintEqualToAnchor:localBtn.trailingAnchor constant:5],
+            [catalogBtn.leadingAnchor constraintEqualToAnchor:localBtn.trailingAnchor constant:5],
+            [catalogBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+
+            [favBtn.leadingAnchor constraintEqualToAnchor:catalogBtn.trailingAnchor constant:5],
+            [favBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
+            
+            [webBtn.leadingAnchor constraintEqualToAnchor:favBtn.trailingAnchor constant:5],
             [webBtn.centerYAnchor constraintEqualToAnchor:self.topBar.centerYAnchor],
             
             [newTabBtn.leadingAnchor constraintEqualToAnchor:webBtn.trailingAnchor constant:10],
@@ -231,9 +272,16 @@ static BrowserWindowController *mainBrowserWindow = nil;
 }
 
 - (void)addNewTab:(id)sender {
-    WKWebView *webView = [[WKWebView alloc] initWithFrame:self.webViewContainer.bounds];
+    WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
+    WKUserContentController *userController = [[WKUserContentController alloc] init];
+    [userController addScriptMessageHandler:self name:@"saveToCatalog"];
+    [userController addScriptMessageHandler:self name:@"toggleFavorite"]; 
+    config.userContentController = userController;
+
+    WKWebView *webView = [[WKWebView alloc] initWithFrame:self.webViewContainer.bounds configuration:config];
     webView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     webView.navigationDelegate = self;
+    webView.UIDelegate = self; 
     
     [webView addObserver:self forKeyPath:@"canGoBack" options:NSKeyValueObservingOptionNew context:nil];
     [webView addObserver:self forKeyPath:@"canGoForward" options:NSKeyValueObservingOptionNew context:nil];
@@ -243,41 +291,192 @@ static BrowserWindowController *mainBrowserWindow = nil;
     [self.webViews addObject:webView];
     [self.webViewContainer addSubview:webView];
     
-    NSButton *tabBtn = [NSButton buttonWithTitle:@"Нова вкладка" target:self action:@selector(switchTab:)];
+    NSButton *tabBtn = [NSButton buttonWithTitle:@"Головна" target:self action:@selector(switchTab:)];
     tabBtn.bezelStyle = NSBezelStyleRounded;
     [self.tabButtons addObject:tabBtn];
     [self.tabBarContainer addSubview:tabBtn];
     
     [self switchTab:tabBtn];
-    [webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"https://www.google.com"]]];
+    [self loadWelcomeScreen:webView];
     [self layoutTabs];
+}
+
+// Обробка кліків з JS (Зберегти та Зірочка)
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    if ([message.name isEqualToString:@"saveToCatalog"]) {
+        NSDictionary *dict = message.body;
+        Product p;
+        p.name = [dict[@"name"] UTF8String];
+        p.code = [dict[@"code"] UTF8String];
+        p.manufacturer = [dict[@"manufacturer"] UTF8String];
+        p.description = [dict[@"description"] UTF8String];
+        p.imageUrl = [dict[@"imageUrl"] UTF8String];
+        p.price = [dict[@"price"] UTF8String];
+        p.link = [dict[@"link"] UTF8String];
+        p.isFavorite = 0;
+        
+        std::string dbPath = [getProjectDbPath() UTF8String];
+        DatabaseManager db(dbPath);
+        db.initialize();
+        
+        if (db.addProduct(p)) {
+            NSAlert *alert = [[NSAlert alloc] init];
+            [alert setMessageText:@"Успіх"];
+            [alert setInformativeText:@"Товар успішно збережено в каталог!"];
+            [alert runModal];
+        } else {
+            NSAlert *alert = [[NSAlert alloc] init];
+            [alert setMessageText:@"Увага"];
+            [alert setInformativeText:@"Цей товар вже є у вашому каталозі."];
+            [alert runModal];
+        }
+    } else if ([message.name isEqualToString:@"toggleFavorite"]) {
+        NSDictionary *dict = message.body;
+        int pId = [dict[@"id"] intValue];
+        int currentStatus = [dict[@"status"] intValue];
+        
+        std::string dbPath = [getProjectDbPath() UTF8String];
+        DatabaseManager db(dbPath);
+        db.initialize();
+        db.toggleFavorite(pId, currentStatus);
+        
+        [self.webViews[self.activeTabIndex] reload]; 
+    }
+}
+
+// Обробка посилань (щоб "Купити" відкривало браузер)
+- (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures {
+    if (!navigationAction.targetFrame.isMainFrame) {
+        [[NSWorkspace sharedWorkspace] openURL:navigationAction.request.URL];
+    }
+    return nil;
+}
+
+- (void)loadWelcomeScreen:(WKWebView *)webView {
+    std::string html = R"(
+        <html><head><meta charset='UTF-8'>
+        <style>
+            body { font-family: -apple-system, sans-serif; background: #f0f2f5; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            h1 { font-size: 48px; color: #333; margin-bottom: 10px; background: linear-gradient(90deg, #007aff, #00c6ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+            p { font-size: 18px; color: #666; margin-bottom: 30px; }
+            .search-box { background: white; border-radius: 30px; padding: 15px 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 500px; text-align: center; }
+        </style>
+        </head><body>
+        <h1>Welcome to HexBrow</h1>
+        <p>Ваш персональний помічник для пошуку товарів</p>
+        <div class="search-box">
+            <p>Використовуйте поле вище, щоб шукати локально або в інтернеті.</p>
+            <p style="font-size: 14px; color: #007aff;">Або натисніть "Каталог", щоб переглянути всі товари.</p>
+        </div>
+        </body></html>
+    )";
+    NSString *fakeUrl = [NSString stringWithFormat:@"http://hexbrow.local/home/%@", [[NSUUID UUID] UUIDString]];
+    [webView loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:[NSURL URLWithString:fakeUrl]];
+}
+
+// ==========================================
+// МЕТОДИ ПОШУКУ
+// ==========================================
+
+- (void)searchLocal:(id)sender {
+    if (self.activeTabIndex < 0) return;
+    std::string query = [self.searchField.stringValue UTF8String];
+    if (query.find("http") != std::string::npos) query = ""; 
+
+    if (query.empty()) {
+        NSString *html = @"<html><body style='font-family:-apple-system; padding:30px;'><h1>Введіть запит для локального пошуку</h1><p>Або натисніть кнопку \"Каталог\", щоб побачити всі товари.</p></body></html>";
+        NSString *fakeUrl = [NSString stringWithFormat:@"http://hexbrow.local/empty/%@", [[NSUUID UUID] UUIDString]];
+        [self.webViews[self.activeTabIndex] loadHTMLString:html baseURL:[NSURL URLWithString:fakeUrl]];
+        return;
+    }
+
+    try {
+        std::string dbPath = [getProjectDbPath() UTF8String];
+        DatabaseManager db(dbPath);
+        db.initialize(); 
+        auto products = db.searchProducts(query);
+        
+        std::string html = HtmlGenerator::generatePage(products, "Результати пошуку: " + query, false, false);
+        NSString *fakeUrl = [NSString stringWithFormat:@"http://hexbrow.local/search/%@", [[NSUUID UUID] UUIDString]];
+        [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:[NSURL URLWithString:fakeUrl]];
+
+    } catch (const std::exception& e) {}
+}
+
+- (void)showCatalog:(id)sender {
+    if (self.activeTabIndex < 0) return;
+    [self.searchField setStringValue:@""]; 
+    try {
+        std::string dbPath = [getProjectDbPath() UTF8String];
+        DatabaseManager db(dbPath);
+        db.initialize(); 
+        auto products = db.searchProducts("");
+        
+        std::string html = HtmlGenerator::generatePage(products, "Офлайн каталог товарів", false, false);
+        NSString *fakeUrl = [NSString stringWithFormat:@"http://hexbrow.local/catalog/%@", [[NSUUID UUID] UUIDString]];
+        [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:[NSURL URLWithString:fakeUrl]];
+    } catch (const std::exception& e) {}
+}
+
+- (void)showFavorites:(id)sender {
+    if (self.activeTabIndex < 0) return;
+    [self.searchField setStringValue:@""]; 
+    try {
+        std::string dbPath = [getProjectDbPath() UTF8String];
+        DatabaseManager db(dbPath);
+        db.initialize(); 
+        auto products = db.getFavorites();
+        
+        std::string html = HtmlGenerator::generatePage(products, "⭐ Обрані товари", false, false);
+        NSString *fakeUrl = [NSString stringWithFormat:@"http://hexbrow.local/favorites/%@", [[NSUUID UUID] UUIDString]];
+        [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:[NSURL URLWithString:fakeUrl]];
+    } catch (const std::exception& e) {}
+}
+
+- (void)searchInternet:(id)sender {
+    if (self.activeTabIndex < 0) return;
+    NSString *query = self.searchField.stringValue;
+    if ([query containsString:@"http"]) query = @"";
+
+    NSString *loadingHtml = @"<html><body style='font-family:-apple-system; display:flex; justify-content:center; align-items:center; height:100vh; background:#f0f2f5;'><h1 style='color:#333;'>Шукаємо в інтернеті... 🌐</h1></body></html>";
+    NSString *loadingUrl = [NSString stringWithFormat:@"http://hexbrow.local/loading/%@", [[NSUUID UUID] UUIDString]];
+    [self.webViews[self.activeTabIndex] loadHTMLString:loadingHtml baseURL:[NSURL URLWithString:loadingUrl]];
+
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        std::vector<Product> products = NetworkManager::fetchInternetProducts([query UTF8String]);
+        
+        std::string title = query.length > 0 ? std::string([query UTF8String]) : "Топ товарів з інтернету";
+        
+        std::string html = HtmlGenerator::generatePage(products, "Результати з інтернету: " + title, true, false);
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self.activeTabIndex >= 0) {
+                NSString *fakeUrl = [NSString stringWithFormat:@"http://hexbrow.local/internet/%@", [[NSUUID UUID] UUIDString]];
+                [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:[NSURL URLWithString:fakeUrl]];
+            }
+        });
+    });
 }
 
 - (void)closeTab:(id)sender {
     if (self.activeTabIndex < 0) return;
-    
     NSInteger indexToRemove = self.activeTabIndex;
     WKWebView *webViewToRemove = self.webViews[indexToRemove];
     NSButton *buttonToRemove = self.tabButtons[indexToRemove];
-    
     @try {
         [webViewToRemove removeObserver:self forKeyPath:@"canGoBack"];
         [webViewToRemove removeObserver:self forKeyPath:@"canGoForward"];
         [webViewToRemove removeObserver:self forKeyPath:@"URL"];
         [webViewToRemove removeObserver:self forKeyPath:@"title"];
+        [webViewToRemove.configuration.userContentController removeScriptMessageHandlerForName:@"saveToCatalog"];
+        [webViewToRemove.configuration.userContentController removeScriptMessageHandlerForName:@"toggleFavorite"];
     } @catch (NSException *exception) {}
-    
     [webViewToRemove removeFromSuperview];
     [buttonToRemove removeFromSuperview];
     [self.webViews removeObjectAtIndex:indexToRemove];
     [self.tabButtons removeObjectAtIndex:indexToRemove];
-    
-    if (self.webViews.count == 0) {
-        [self addNewTab:nil];
-    } else {
-        if (indexToRemove >= self.webViews.count) {
-            indexToRemove = self.webViews.count - 1;
-        }
+    if (self.webViews.count == 0) { [self addNewTab:nil]; } else {
+        if (indexToRemove >= self.webViews.count) indexToRemove = self.webViews.count - 1;
         [self switchTab:self.tabButtons[indexToRemove]];
     }
     [self layoutTabs];
@@ -286,14 +485,12 @@ static BrowserWindowController *mainBrowserWindow = nil;
 - (void)switchTab:(NSButton *)sender {
     NSInteger index = [self.tabButtons indexOfObject:sender];
     if (index == NSNotFound) return;
-    
     for (WKWebView *wv in self.webViews) { wv.hidden = YES; }
-    
     WKWebView *activeWebView = self.webViews[index];
     activeWebView.hidden = NO;
     self.activeTabIndex = index;
-    
     self.searchField.stringValue = activeWebView.URL.absoluteString ?: @"";
+    
     [self updateNavButtons:activeWebView];
 }
 
@@ -307,7 +504,6 @@ static BrowserWindowController *mainBrowserWindow = nil;
         WKWebView *webView = (WKWebView *)object;
         if (self.activeTabIndex >= 0 && self.activeTabIndex < self.webViews.count && webView == self.webViews[self.activeTabIndex]) {
             [self updateNavButtons:webView];
-            
             if ([keyPath isEqualToString:@"URL"] && webView.URL) {
                 NSString *urlString = webView.URL.absoluteString;
                 if (![urlString containsString:@"hexbrow.local"] && ![urlString isEqualToString:@"about:blank"]) {
@@ -316,11 +512,7 @@ static BrowserWindowController *mainBrowserWindow = nil;
             }
             if ([keyPath isEqualToString:@"title"] && webView.title) {
                 NSButton *tabBtn = self.tabButtons[self.activeTabIndex];
-                if (webView.title.length > 15) {
-                    tabBtn.title = [[webView.title substringToIndex:15] stringByAppendingString:@"..."];
-                } else {
-                    tabBtn.title = webView.title;
-                }
+                tabBtn.title = (webView.title.length > 15) ? [[webView.title substringToIndex:15] stringByAppendingString:@"..."] : webView.title;
                 [self layoutTabs];
             }
         }
@@ -345,9 +537,7 @@ static BrowserWindowController *mainBrowserWindow = nil;
 - (void)controlTextDidEndEditing:(NSNotification *)obj {
     NSString *input = self.searchField.stringValue;
     if (self.activeTabIndex < 0 || input.length == 0) return;
-    
     WKWebView *currentView = self.webViews[self.activeTabIndex];
-    
     if ([input hasPrefix:@"http://"] || [input hasPrefix:@"https://"]) {
         [currentView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:input]]];
     } else {
@@ -355,117 +545,18 @@ static BrowserWindowController *mainBrowserWindow = nil;
     }
 }
 
-- (void)searchLocal:(id)sender {
-    if (self.activeTabIndex < 0) return;
-    std::string query = [self.searchField.stringValue UTF8String];
-    if (query.find("http") != std::string::npos) query = ""; 
-
-    try {
-        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-        std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
-        
-        DatabaseManager db(dbPath);
-        db.initialize(); 
-        auto products = db.searchProducts(query);
-
-        std::string html = R"(
-            <html><head><meta charset='UTF-8'>
-            <style>
-                body { font-family: -apple-system, sans-serif; padding: 30px; background: #f0f2f5; }
-                h1 { color: #333; }
-                .grid { display: flex; flex-wrap: wrap; gap: 20px; }
-                .card { background: white; border-radius: 12px; padding: 20px; width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); transition: transform 0.2s; }
-                .card:hover { transform: translateY(-5px); box-shadow: 0 8px 24px rgba(0,0,0,0.1); }
-                .card h2 { font-size: 18px; color: #1a1a1a; margin-top: 0; }
-                .card .brand { color: #007aff; font-weight: bold; font-size: 14px; margin-bottom: 10px; }
-                .card p { color: #666; font-size: 14px; line-height: 1.5; }
-            </style>
-            </head><body>
-        )";
-        html += "<h1>Результати пошуку: " + query + "</h1><div class='grid'>";
-
-        if (products.empty()) {
-            html += "<p>Товарів не знайдено.</p>";
-        } else {
-            for (const auto& p : products) {
-                html += "<div class='card'>";
-                html += "<div class='brand'>" + p.manufacturer + "</div>";
-                html += "<h2>" + p.name + "</h2>";
-                html += "<p><b>Код:</b> " + p.code + "</p>";
-                html += "<p>" + p.description + "</p>";
-                html += "</div>";
-            }
-        }
-        html += "</div></body></html>";
-        
-        [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:nil];
-
-    } catch (const std::exception& e) {
-        [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithFormat:@"<h1>Помилка: %s</h1>", e.what()] baseURL:nil];
-    }
-}
-
-- (void)searchInternet:(id)sender {
-    if (self.activeTabIndex < 0) return;
-    NSString *query = self.searchField.stringValue;
-    if ([query containsString:@"http"]) query = @"";
-    if (query.length == 0) return;
-
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        std::vector<Product> products = NetworkManager::fetchInternetProducts([query UTF8String]);
-
-        std::string html = R"(
-            <html><head><meta charset='UTF-8'>
-            <style>
-                body { font-family: -apple-system, sans-serif; padding: 30px; background: #eef2f5; }
-                h1 { color: #333; }
-                .grid { display: flex; flex-wrap: wrap; gap: 20px; }
-                .card { background: white; border-radius: 12px; padding: 0; width: 280px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.08); transition: transform 0.2s; }
-                .card:hover { transform: translateY(-5px); box-shadow: 0 8px 24px rgba(0,0,0,0.15); }
-                .card img { width: 100%; height: 180px; object-fit: cover; }
-                .card-content { padding: 15px; }
-                .card h2 { font-size: 16px; color: #1a1a1a; margin: 0 0 10px 0; }
-                .card .price { color: #e63946; font-weight: bold; font-size: 18px; margin-bottom: 10px; }
-                .card .brand { color: #666; font-size: 12px; text-transform: uppercase; margin-bottom: 5px; }
-                .card a { display: block; text-align: center; background: #007aff; color: white; text-decoration: none; padding: 10px; border-radius: 6px; margin-top: 10px; font-weight: bold; }
-                .card a:hover { background: #0056b3; }
-            </style>
-            </head><body>
-        )";
-        html += "<h1>Результати з інтернету: " + std::string([query UTF8String]) + "</h1><div class='grid'>";
-
-        if (products.empty()) {
-            html += "<p>Нічого не знайдено в мережі.</p>";
-        } else {
-            for (const auto& p : products) {
-                html += "<div class='card'>";
-                html += "<img src='" + p.imageUrl + "' alt='product'>";
-                html += "<div class='card-content'>";
-                html += "<div class='brand'>" + p.manufacturer + "</div>";
-                html += "<h2>" + p.name + "</h2>";
-                html += "<div class='price'>$" + p.price + "</div>";
-                html += "<a href='" + p.link + "' target='_blank'>Купити / Переглянути</a>";
-                html += "</div></div>";
-            }
-        }
-        html += "</div></body></html>";
-
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (self.activeTabIndex >= 0) {
-                [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:nil];
-            }
-        });
-    });
-}
-
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
     NSString *url = webView.URL.absoluteString;
     NSString *title = webView.title;
     if (url && ![url containsString:@"hexbrow.local"] && ![url isEqualToString:@"about:blank"]) {
-        NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-        std::string dbPath = [[[paths firstObject] stringByAppendingPathComponent:@"products.db"] UTF8String];
+        std::string dbPath = [getProjectDbPath() UTF8String];
         DatabaseManager db(dbPath);
         db.addHistory([url UTF8String], [title UTF8String]);
+    }
+    
+    if (self.activeTabIndex >= 0 && self.activeTabIndex < self.webViews.count && webView == self.webViews[self.activeTabIndex]) {
+        self.backBtn.enabled = webView.canGoBack;
+        self.forwardBtn.enabled = webView.canGoForward;
     }
 }
 
@@ -476,6 +567,8 @@ static BrowserWindowController *mainBrowserWindow = nil;
             [webView removeObserver:self forKeyPath:@"canGoForward"];
             [webView removeObserver:self forKeyPath:@"URL"];
             [webView removeObserver:self forKeyPath:@"title"];
+            [webView.configuration.userContentController removeScriptMessageHandlerForName:@"saveToCatalog"];
+            [webView.configuration.userContentController removeScriptMessageHandlerForName:@"toggleFavorite"];
         } @catch (NSException *exception) {}
     }
 }
