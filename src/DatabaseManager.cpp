@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <algorithm>
 
+// Правильна функція для кирилиці
 std::string toLowerUtf8(const std::string& s) {
     std::string r = s;
     for (size_t i = 0; i < r.size(); ++i) {
@@ -21,6 +22,16 @@ std::string toLowerUtf8(const std::string& s) {
         }
     }
     return r;
+}
+
+// Екранування символів % та _ для SQL LIKE
+std::string escapeLike(const std::string& input) {
+    std::string result;
+    for (char c : input) {
+        if (c == '%' || c == '_' || c == '\\') result += '\\';
+        result += c;
+    }
+    return result;
 }
 
 static void lower_utf8_func(sqlite3_context *context, int argc, sqlite3_value **argv) {
@@ -64,12 +75,7 @@ void DatabaseManager::migrateDatabase() {
 
 void DatabaseManager::initialize() {
     const char* sqlCreate = 
-        "CREATE TABLE IF NOT EXISTS products ("
-        "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-        "name TEXT NOT NULL,"
-        "code TEXT NOT NULL,"
-        "manufacturer TEXT NOT NULL,"
-        "description TEXT);"
+        "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, code TEXT NOT NULL, manufacturer TEXT NOT NULL, description TEXT);"
         "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS history (id INTEGER PRIMARY KEY AUTOINCREMENT, url TEXT, title TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP);";
 
@@ -85,12 +91,11 @@ void DatabaseManager::initialize() {
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(m_db, "SELECT COUNT(*) FROM products;", -1, &stmt, nullptr) == SQLITE_OK) {
         if (sqlite3_step(stmt) == SQLITE_ROW && sqlite3_column_int(stmt, 0) == 0) {
-    // В методі DatabaseManager::initialize()
-        const char* sqlInsert = 
-            "INSERT INTO products (name, code, manufacturer, description, imageUrl, price, link, isFavorite) VALUES "
-            "('Ноутбук Dell XPS 13', 'DXPS13-001', 'Dell', '13-дюймовий ультрабук', 'https://dummyjson.com/image/400x400?text=Dell+XPS', '1200', 'https://www.google.com/search?q=Dell+XPS+13&tbm=shop', 0),"
-            "('Миша Logitech MX Master 3', 'LMX3-002', 'Logitech', 'Бездротова миша', 'https://dummyjson.com/image/400x400?text=Logitech+MX', '99', 'https://www.google.com/search?q=Logitech+MX+Master+3&tbm=shop', 0),"
-            "('Клавіатура Apple Magic Keyboard', 'AMK-003', 'Apple', 'Бездротова клавіатура', 'https://dummyjson.com/image/400x400?text=Apple+Keyboard', '150', 'https://www.google.com/search?q=Apple+Magic+Keyboard&tbm=shop', 0);";
+            const char* sqlInsert = 
+                "INSERT INTO products (name, code, manufacturer, description, imageUrl, price, link, isFavorite) VALUES "
+                "('Ноутбук Dell XPS 13', 'DXPS13-001', 'Dell', '13-дюймовий ультрабук', 'https://dummyjson.com/image/400x400?text=Dell+XPS', '1200', 'https://www.google.com/search?q=Dell+XPS+13&tbm=shop', 0),"
+                "('Миша Logitech MX Master 3', 'LMX3-002', 'Logitech', 'Бездротова миша', 'https://dummyjson.com/image/400x400?text=Logitech+MX', '99', 'https://www.google.com/search?q=Logitech+MX+Master+3&tbm=shop', 0),"
+                "('Клавіатура Apple Magic Keyboard', 'AMK-003', 'Apple', 'Бездротова клавіатура', 'https://dummyjson.com/image/400x400?text=Apple+Keyboard', '150', 'https://www.google.com/search?q=Apple+Magic+Keyboard&tbm=shop', 0);";
             sqlite3_exec(m_db, sqlInsert, nullptr, nullptr, nullptr);
         }
         sqlite3_finalize(stmt);
@@ -98,14 +103,13 @@ void DatabaseManager::initialize() {
 }
 
 bool DatabaseManager::addProduct(const Product& product) {
-    // Перевірка на дублікат за кодом
     const char* checkSql = "SELECT id FROM products WHERE code = ?;";
     sqlite3_stmt* checkStmt;
     if (sqlite3_prepare_v2(m_db, checkSql, -1, &checkStmt, nullptr) == SQLITE_OK) {
-        sqlite3_bind_text(checkStmt, 1, product.code.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(checkStmt, 1, product.code.c_str(), -1, SQLITE_TRANSIENT);
         if (sqlite3_step(checkStmt) == SQLITE_ROW) {
             sqlite3_finalize(checkStmt);
-            return false; // Вже існує
+            return false; 
         }
         sqlite3_finalize(checkStmt);
     }
@@ -113,13 +117,13 @@ bool DatabaseManager::addProduct(const Product& product) {
     const char* sql = "INSERT INTO products (name, code, manufacturer, description, imageUrl, price, link, isFavorite) VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-    sqlite3_bind_text(stmt, 1, product.name.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, product.code.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 3, product.manufacturer.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 4, product.description.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 5, product.imageUrl.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 6, product.price.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 7, product.link.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, product.name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, product.code.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, product.manufacturer.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, product.description.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, product.imageUrl.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, product.price.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 7, product.link.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 8, product.isFavorite);
     bool success = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
@@ -164,7 +168,7 @@ std::vector<Product> DatabaseManager::searchProducts(const std::string& query) c
     std::vector<Product> results;
     std::string sql = "SELECT id, name, code, manufacturer, description, imageUrl, price, link, isFavorite FROM products";
     if (!query.empty()) {
-        sql += " WHERE lower_utf8(name) LIKE lower_utf8(?) OR lower_utf8(manufacturer) LIKE lower_utf8(?) OR lower_utf8(code) LIKE lower_utf8(?)";
+        sql += " WHERE lower_utf8(name) LIKE lower_utf8(?) ESCAPE '\\' OR lower_utf8(manufacturer) LIKE lower_utf8(?) ESCAPE '\\' OR lower_utf8(code) LIKE lower_utf8(?) ESCAPE '\\'";
     }
 
     sqlite3_stmt* stmt;
@@ -173,10 +177,11 @@ std::vector<Product> DatabaseManager::searchProducts(const std::string& query) c
     }
 
     if (!query.empty()) {
-        std::string likeQuery = "%" + query + "%";
-        sqlite3_bind_text(stmt, 1, likeQuery.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(stmt, 2, likeQuery.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(stmt, 3, likeQuery.c_str(), -1, SQLITE_STATIC);
+        std::string escapedQuery = escapeLike(query);
+        std::string likeQuery = "%" + escapedQuery + "%";
+        sqlite3_bind_text(stmt, 1, likeQuery.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, likeQuery.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 3, likeQuery.c_str(), -1, SQLITE_TRANSIENT);
     }
 
     while (sqlite3_step(stmt) == SQLITE_ROW) {
@@ -196,19 +201,17 @@ std::vector<Product> DatabaseManager::searchProducts(const std::string& query) c
     return results;
 }
 
-// ... (Решта CRUD: updateProduct, deleteProduct, getById, registerUser, loginUser, addHistory) ...
-// (Я додав їх у код нижче для зручності копіювання)
 bool DatabaseManager::updateProduct(const Product& product) {
     const char* sql = "UPDATE products SET name=?, code=?, manufacturer=?, description=?, imageUrl=?, price=?, link=?, isFavorite=? WHERE id=?;";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-    sqlite3_bind_text(stmt, 1, product.name.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, product.code.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 3, product.manufacturer.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 4, product.description.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 5, product.imageUrl.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 6, product.price.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 7, product.link.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, product.name.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, product.code.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, product.manufacturer.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 4, product.description.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 5, product.imageUrl.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 6, product.price.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 7, product.link.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int(stmt, 8, product.isFavorite);
     sqlite3_bind_int(stmt, 9, product.id);
     bool success = (sqlite3_step(stmt) == SQLITE_DONE);
@@ -252,8 +255,8 @@ bool DatabaseManager::registerUser(const std::string& username, const std::strin
     const char* sql = "INSERT INTO users (username, password) VALUES (?, ?);";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_TRANSIENT);
     bool success = (sqlite3_step(stmt) == SQLITE_DONE);
     sqlite3_finalize(stmt);
     return success;
@@ -263,8 +266,8 @@ bool DatabaseManager::loginUser(const std::string& username, const std::string& 
     const char* sql = "SELECT id FROM users WHERE username = ? AND password = ?;";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
-    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
-    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_TRANSIENT);
     bool success = (sqlite3_step(stmt) == SQLITE_ROW);
     sqlite3_finalize(stmt);
     return success;
@@ -274,8 +277,8 @@ void DatabaseManager::addHistory(const std::string& url, const std::string& titl
     const char* sql = "INSERT INTO history (url, title) VALUES (?, ?);";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
-        sqlite3_bind_text(stmt, 1, url.c_str(), -1, SQLITE_STATIC);
-        sqlite3_bind_text(stmt, 2, title.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 1, url.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, title.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_step(stmt);
         sqlite3_finalize(stmt);
     }

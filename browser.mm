@@ -17,6 +17,8 @@
 @end
 
 @interface BrowserWindowController : NSWindowController <WKNavigationDelegate, NSSearchFieldDelegate, WKScriptMessageHandler, WKUIDelegate>
+@property (nonatomic) int currentLimit;
+@property (strong, nonatomic) NSString *currentQuery;
 @property (strong, nonatomic) NSView *topBar;
 @property (strong, nonatomic) NSSearchField *searchField;
 @property (strong, nonatomic) NSButton *backBtn;
@@ -36,12 +38,10 @@ static BrowserWindowController *mainBrowserWindow = nil;
 // ==========================================
 NSString* getProjectDbPath() {
     NSString *exePath = [[NSBundle mainBundle] executablePath];
-    // Шлях: HexBrow.app/Contents/MacOS/HexBrow -> піднімаємось на 3 рівні вгору до кореня проєкту
-    NSString *macOSDir = [exePath stringByDeletingLastPathComponent]; // MacOS
-    NSString *contentsDir = [macOSDir stringByDeletingLastPathComponent]; // Contents
-    NSString *appDir = [contentsDir stringByDeletingLastPathComponent]; // HexBrow.app
-    NSString *rootDir = [appDir stringByDeletingLastPathComponent]; // Корінь проєкту (HexBrow)
-    
+    NSString *macOSDir = [exePath stringByDeletingLastPathComponent];
+    NSString *contentsDir = [macOSDir stringByDeletingLastPathComponent];
+    NSString *appDir = [contentsDir stringByDeletingLastPathComponent];
+    NSString *rootDir = [appDir stringByDeletingLastPathComponent];
     return [rootDir stringByAppendingPathComponent:@"products.db"];
 }
 
@@ -274,8 +274,12 @@ NSString* getProjectDbPath() {
 - (void)addNewTab:(id)sender {
     WKWebViewConfiguration *config = [[WKWebViewConfiguration alloc] init];
     WKUserContentController *userController = [[WKUserContentController alloc] init];
+    
+    // ДОДАНО ВСІ ТРИ ОБРОБНИКИ
     [userController addScriptMessageHandler:self name:@"saveToCatalog"];
     [userController addScriptMessageHandler:self name:@"toggleFavorite"]; 
+    [userController addScriptMessageHandler:self name:@"loadMore"];
+    
     config.userContentController = userController;
 
     WKWebView *webView = [[WKWebView alloc] initWithFrame:self.webViewContainer.bounds configuration:config];
@@ -301,7 +305,7 @@ NSString* getProjectDbPath() {
     [self layoutTabs];
 }
 
-// Обробка кліків з JS (Зберегти та Зірочка)
+// Обробка кліків з JS
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
     if ([message.name isEqualToString:@"saveToCatalog"]) {
         NSDictionary *dict = message.body;
@@ -341,10 +345,28 @@ NSString* getProjectDbPath() {
         db.toggleFavorite(pId, currentStatus);
         
         [self.webViews[self.activeTabIndex] reload]; 
+    } else if ([message.name isEqualToString:@"loadMore"]) {
+        if (self.activeTabIndex < 0) return;
+        
+        self.currentLimit += 20; // Збільшуємо ліміт
+        
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            std::vector<Product> products = NetworkManager::fetchInternetProducts([self.currentQuery UTF8String], 0, self.currentLimit);
+            
+            std::string title = self.currentQuery.length > 0 ? std::string([self.currentQuery UTF8String]) : "Топ товарів з інтернету";
+            std::string html = HtmlGenerator::generatePage(products, "Результати з інтернету: " + title, true, false);
+            
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (self.activeTabIndex >= 0) {
+                    NSString *fakeUrl = [NSString stringWithFormat:@"http://hexbrow.local/internet/%@", [[NSUUID UUID] UUIDString]];
+                    [self.webViews[self.activeTabIndex] loadHTMLString:[NSString stringWithUTF8String:html.c_str()] baseURL:[NSURL URLWithString:fakeUrl]];
+                }
+            });
+        });
     }
 }
 
-// Обробка посилань (щоб "Купити" відкривало браузер)
+// Обробка посилань
 - (WKWebView *)webView:(WKWebView *)webView createWebViewWithConfiguration:(WKWebViewConfiguration *)configuration forNavigationAction:(WKNavigationAction *)navigationAction windowFeatures:(WKWindowFeatures *)windowFeatures {
     if (!navigationAction.targetFrame.isMainFrame) {
         [[NSWorkspace sharedWorkspace] openURL:navigationAction.request.URL];
@@ -438,15 +460,19 @@ NSString* getProjectDbPath() {
     NSString *query = self.searchField.stringValue;
     if ([query containsString:@"http"]) query = @"";
 
+    // ЗБЕРІГАЄМО ЗАПИТ ТА ЛІМІТ
+    self.currentQuery = query;
+    self.currentLimit = 20;
+
     NSString *loadingHtml = @"<html><body style='font-family:-apple-system; display:flex; justify-content:center; align-items:center; height:100vh; background:#f0f2f5;'><h1 style='color:#333;'>Шукаємо в інтернеті... 🌐</h1></body></html>";
     NSString *loadingUrl = [NSString stringWithFormat:@"http://hexbrow.local/loading/%@", [[NSUUID UUID] UUIDString]];
     [self.webViews[self.activeTabIndex] loadHTMLString:loadingHtml baseURL:[NSURL URLWithString:loadingUrl]];
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        std::vector<Product> products = NetworkManager::fetchInternetProducts([query UTF8String]);
+        // ВИКОРИСТОВУЄМО ЛІМІТ
+        std::vector<Product> products = NetworkManager::fetchInternetProducts([query UTF8String], 0, self.currentLimit);
         
         std::string title = query.length > 0 ? std::string([query UTF8String]) : "Топ товарів з інтернету";
-        
         std::string html = HtmlGenerator::generatePage(products, "Результати з інтернету: " + title, true, false);
 
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -463,6 +489,7 @@ NSString* getProjectDbPath() {
     NSInteger indexToRemove = self.activeTabIndex;
     WKWebView *webViewToRemove = self.webViews[indexToRemove];
     NSButton *buttonToRemove = self.tabButtons[indexToRemove];
+    
     @try {
         [webViewToRemove removeObserver:self forKeyPath:@"canGoBack"];
         [webViewToRemove removeObserver:self forKeyPath:@"canGoForward"];
@@ -470,13 +497,18 @@ NSString* getProjectDbPath() {
         [webViewToRemove removeObserver:self forKeyPath:@"title"];
         [webViewToRemove.configuration.userContentController removeScriptMessageHandlerForName:@"saveToCatalog"];
         [webViewToRemove.configuration.userContentController removeScriptMessageHandlerForName:@"toggleFavorite"];
+        [webViewToRemove.configuration.userContentController removeScriptMessageHandlerForName:@"loadMore"];
     } @catch (NSException *exception) {}
+    
     [webViewToRemove removeFromSuperview];
     [buttonToRemove removeFromSuperview];
     [self.webViews removeObjectAtIndex:indexToRemove];
     [self.tabButtons removeObjectAtIndex:indexToRemove];
-    if (self.webViews.count == 0) { [self addNewTab:nil]; } else {
-        if (indexToRemove >= self.webViews.count) indexToRemove = self.webViews.count - 1;
+    
+    if (self.webViews.count == 0) { 
+        [self addNewTab:nil]; 
+    } else {
+        if (indexToRemove >= (NSInteger)self.webViews.count) indexToRemove = (NSInteger)self.webViews.count - 1;
         [self switchTab:self.tabButtons[indexToRemove]];
     }
     [self layoutTabs];
@@ -502,7 +534,7 @@ NSString* getProjectDbPath() {
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
     if ([object isKindOfClass:[WKWebView class]]) {
         WKWebView *webView = (WKWebView *)object;
-        if (self.activeTabIndex >= 0 && self.activeTabIndex < self.webViews.count && webView == self.webViews[self.activeTabIndex]) {
+        if (self.activeTabIndex >= 0 && self.activeTabIndex < (NSInteger)self.webViews.count && webView == self.webViews[self.activeTabIndex]) {
             [self updateNavButtons:webView];
             if ([keyPath isEqualToString:@"URL"] && webView.URL) {
                 NSString *urlString = webView.URL.absoluteString;
@@ -554,7 +586,7 @@ NSString* getProjectDbPath() {
         db.addHistory([url UTF8String], [title UTF8String]);
     }
     
-    if (self.activeTabIndex >= 0 && self.activeTabIndex < self.webViews.count && webView == self.webViews[self.activeTabIndex]) {
+    if (self.activeTabIndex >= 0 && self.activeTabIndex < (NSInteger)self.webViews.count && webView == self.webViews[self.activeTabIndex]) {
         self.backBtn.enabled = webView.canGoBack;
         self.forwardBtn.enabled = webView.canGoForward;
     }
@@ -569,6 +601,7 @@ NSString* getProjectDbPath() {
             [webView removeObserver:self forKeyPath:@"title"];
             [webView.configuration.userContentController removeScriptMessageHandlerForName:@"saveToCatalog"];
             [webView.configuration.userContentController removeScriptMessageHandlerForName:@"toggleFavorite"];
+            [webView.configuration.userContentController removeScriptMessageHandlerForName:@"loadMore"];
         } @catch (NSException *exception) {}
     }
 }
@@ -579,6 +612,7 @@ NSString* getProjectDbPath() {
 // ==========================================
 int main(int argc, const char * argv[]) {
     @autoreleasepool {
+        (void)argc; (void)argv;
         NSApplication *app = [NSApplication sharedApplication];
         LoginWindowController *login = [[LoginWindowController alloc] init];
         [login showWindow:nil];

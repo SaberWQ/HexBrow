@@ -17,8 +17,8 @@ public:
     bool deleteProduct(int id);
     Product getById(int id);
     std::vector<Product> searchProducts(const std::string& query) const;
-    std::vector<Product> getFavorites() const; // Нове
-    bool toggleFavorite(int id, int currentStatus); // Нове
+    std::vector<Product> getFavorites() const;
+    bool toggleFavorite(int id, int currentStatus);
 
     // Користувачі та історія
     bool registerUser(const std::string& username, const std::string& password);

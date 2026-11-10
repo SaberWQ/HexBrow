@@ -1,9 +1,9 @@
 #pragma once
 #include "Product.h"
 #include <vector>
+#include <string>
 
 class NetworkManager {
 public:
-    // Функція для отримання товарів з інтернету
-    static std::vector<Product> fetchInternetProducts(const std::string& query);
+    static std::vector<Product> fetchInternetProducts(const std::string& query, int skip = 0, int limit = 20);
 };

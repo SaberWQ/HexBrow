@@ -12,9 +12,10 @@ HexBrow.app/
 # VS Code
 .vscode/
 
-# Xcode
-build/
-DerivedData/
+# Zipped archives
+*.zip
+
+# SQLiteCpp (Якщо ти використовуєш чистий C API, ця папка не потрібна)
+SQLiteCpp/
 
 search.gci 
-/SQLiteCpp
