@@ -10,5 +10,6 @@ struct Product {
     std::string imageUrl;
     std::string price;
     std::string link;
-    int isFavorite; // 1 - так, 0 - ні
+    int isFavorite;
+    int owner_id;
 };

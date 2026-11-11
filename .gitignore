@@ -3,19 +3,21 @@
 
 # Build artifacts
 HexBrow.app/
+web_server
+cgi-bin/
 *.o
 *.dSYM
 
 # Databases
+*.o
+*.dSYM
 *.db
+
 
 # VS Code
 .vscode/
 
-# Zipped archives
+# Archives
 *.zip
 
-# SQLiteCpp (Якщо ти використовуєш чистий C API, ця папка не потрібна)
-SQLiteCpp/
-
-search.gci 
+HexBrowApp
