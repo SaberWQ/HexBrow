@@ -2,22 +2,20 @@
 .DS_Store
 
 # Build artifacts
-HexBrow.app/
 web_server
-cgi-bin/
+HexBrowApp
+HexBrow.app/
 *.o
 *.dSYM
 
-# Databases
-*.o
-*.dSYM
-*.db
+# Database (local only)
+products.db
 
+# User-uploaded images
+static/
 
-# VS Code
+# IDE
 .vscode/
 
 # Archives
 *.zip
-
-HexBrowApp

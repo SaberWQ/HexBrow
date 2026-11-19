@@ -1,67 +1,85 @@
 #include "HtmlGenerator.h"
+#include "Favicon.h"
 #include <sstream>
 
-// Екранування для HTML (захист від XSS)
+/*
+ * УКР: Екранує небезпечні HTML-символи (&, <, >, ", ') для захисту від XSS.
+ * ENG: Escapes dangerous HTML chars (&, <, >, ", ') to prevent XSS.
+ */
 std::string htmlEscape(const std::string& s) {
     std::string out;
     for (char c : s) {
         switch (c) {
-            case '&': out += "&amp;"; break;
-            case '<': out += "&lt;"; break;
-            case '>': out += "&gt;"; break;
-            case '"': out += "&quot;"; break;
-            case '\'': out += "&#39;"; break;
+            case '&': out += "&amp;"; break;                    // Ampersand
+            case '<': out += "&lt;"; break;                     // Less-than
+            case '>': out += "&gt;"; break;                     // Greater-than
+            case '"': out += "&quot;"; break;                   // Double quote
+            case '\'': out += "&#39;"; break;                   // Single quote
             default: out += c;
         }
     }
     return out;
 }
 
-// Екранування для JavaScript
+/*
+ * УКР: Екранує символи для JS-рядка. Використовується ПЕРЕД htmlEscape,
+ *      бо браузер декодує HTML-сутності назад у символи.
+ * ENG: Escapes chars for a JS string. Must be used BEFORE htmlEscape
+ *      because the browser decodes HTML entities back into chars.
+ */
 std::string escapeJs(const std::string& str) {
     std::string r;
     for (char c : str) {
         switch (c) {
-            case '\\': r += "\\\\"; break;
-            case '\'': r += "\\'"; break;
-            case '\n': r += "\\n"; break;
-            case '\r': r += "\\r"; break;
+            case '\\': r += "\\\\"; break;                      // Backslash
+            case '\'': r += "\\'"; break;                       // Single quote
+            case '\n': r += "\\n"; break;                       // Newline
+            case '\r': r += "\\r"; break;                       // Carriage return
             default: r += c;
         }
     }
     return r;
 }
 
-// Форматування ціни (додає пробіли та символ гривні)
+/*
+ * УКР: Форматує ціну з пробілами та символом ₴.
+ * ENG: Formats price with thousands separators and ₴ symbol.
+ */
 std::string formatPriceForDisplay(const std::string& priceStr) {
     if (priceStr.empty()) return "0";
     std::string intPart = priceStr;
     std::string fracPart = "";
-    size_t dotPos = priceStr.find('.');
+    size_t dotPos = priceStr.find('.');                         // Find decimal point
     if (dotPos != std::string::npos) {
         intPart = priceStr.substr(0, dotPos);
         std::string frac = priceStr.substr(dotPos + 1);
-        if (frac != "00" && frac != "0") fracPart = "." + frac;
+        if (frac != "00" && frac != "0") fracPart = "." + frac; // Add fractional part
     }
-    int n = (int)intPart.length() - 3;
-    while (n > 0) { intPart.insert(n, " "); n -= 3; }
+    int n = (int)intPart.length() - 3;                          // First space position
+    while (n > 0) { intPart.insert(n, " "); n -= 3; }           // Insert spaces
     return intPart + fracPart + " ₴";
 }
 
+/*
+ * УКР: Генерує повну HTML-сторінку (head, topbar, search, grid).
+ * ENG: Generates the full HTML page (head, topbar, search, grid).
+ */
 std::string HtmlGenerator::generatePage(
-    const std::vector<Product>& products, 
-    const std::string& title, 
-    const std::string& username, 
+    const std::vector<Product>& products,
+    const std::string& title,
+    const std::string& username,
     int currentUserId,
     bool showSaveButton
 ) {
     std::stringstream html;
-    
+
+    /* ============ HEAD + CSS ============ */
     html << R"(
         <!DOCTYPE html><html><head><meta charset='UTF-8'>
+        <link rel='icon' href=')" << FAVICON_DATA_URI << R"('>
         <title>HexBrow - )" << htmlEscape(title) << R"(</title>
         <style>
-            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 0; background: #f0f2f5; margin: 0; }
+            body { font-family: -apple-system, sans-serif; padding: 0; background: #f0f2f5; margin: 0; }
             .topbar { background: #fff; padding: 15px 30px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 10px rgba(0,0,0,0.05); position: sticky; top: 0; z-index: 100; }
             .topbar h1 { margin: 0; font-size: 24px; color: #1a1a1a; }
             .topbar .user-info { display: flex; align-items: center; gap: 15px; font-size: 15px; }
@@ -96,14 +114,17 @@ std::string HtmlGenerator::generatePage(
             .empty-state { text-align: center; width: 100%; color: #888; padding: 50px; font-size: 18px; }
         </style>
         </head><body>
-        
+    )";
+
+    /* ============ TOPBAR ============ */
+    html << R"(
         <div class='topbar'>
             <h1>HexBrow</h1>
             <div class='user-info'>
     )";
 
     if (!username.empty()) {
-        html << "<span>Привіт, <b>" << htmlEscape(username) << "</b>!</span>";
+        html << "<span>Привіт, <b>" << htmlEscape(username) << "</b>!</span>"; // Escaped nickname
         html << "<a href='/profile'>👤 Профіль</a>";
         html << "<a href='/upload'>📤 Додати товар</a>";
         html << "<a href='/logout' style='color:#dc3545;'>🚪 Вийти</a>";
@@ -112,21 +133,21 @@ std::string HtmlGenerator::generatePage(
         html << "<a href='/register'>Реєстрація</a>";
     }
 
+    /* ============ SEARCH BOX ============ */
     html << R"(
             </div>
         </div>
-        
         <div class='search-container'>
             <form action='/search' method='GET' class='search-box'>
                 <input type='text' name='q' placeholder='Шукати товари локально та в інтернеті...' autofocus>
                 <button type='submit'>Знайти</button>
             </form>
         </div>
-
         <div class='content'>
     )";
 
-    html << "<h1 class='page-title'>" << htmlEscape(title) << "</h1>";
+    /* ============ TITLE + PRODUCT GRID ============ */
+    html << "<h1 class='page-title'>" << htmlEscape(title) << "</h1>"; // Escaped title
     html << "<div class='grid'>";
 
     if (products.empty()) {
@@ -134,33 +155,31 @@ std::string HtmlGenerator::generatePage(
     } else {
         for (const auto& p : products) {
             html << "<div class='card'>";
-            
-            // Картинка з перевіркою на порожнечу
+
+            /* Image with fallback */
             std::string imgSrc = p.imageUrl.empty() ? "https://via.placeholder.com/280x200?text=No+Image" : p.imageUrl;
             html << "<img src='" << htmlEscape(imgSrc) << "' alt='product' onerror=\"this.src='https://via.placeholder.com/280x200?text=No+Image'\">";
-            
+
             html << "<div class='card-content'>";
-            html << "<div class='brand'>" << htmlEscape(p.manufacturer) << "</div>";
-            html << "<h2>" << htmlEscape(p.name) << "</h2>";
+            html << "<div class='brand'>" << htmlEscape(p.manufacturer) << "</div>"; // Escaped brand
+            html << "<h2>" << htmlEscape(p.name) << "</h2>";                        // Escaped name
             html << "<div class='price'>" << htmlEscape(formatPriceForDisplay(p.price)) << "</div>";
-            
+
             html << "<div class='btn-group'>";
-            
-            // Кнопка "Детальніше"
             html << "<a href='/product?id=" << p.id << "' class='btn btn-details'>Детальніше</a>";
-            
-            // Кнопка "Купити в мережі" (якщо є посилання)
+
+            /* Buy button only if safe URL */
             if (!p.link.empty() && (p.link.find("http") == 0)) {
                 html << "<a href='" << htmlEscape(p.link) << "' target='_blank' class='btn'>Купити в мережі</a>";
             }
 
-            // Кнопки редагування та видалення (ТІЛЬКИ для власника товару)
+            /* Edit/delete only for the owner */
             if (p.owner_id == currentUserId && currentUserId != 0) {
                 html << "<a href='/edit_product?id=" << p.id << "' class='btn btn-edit'>✏️ Редагувати</a>";
                 html << "<a href='/delete_product?id=" << p.id << "' class='btn btn-delete' onclick=\"return confirm('Ви впевнені, що хочете видалити цей товар?');\">🗑️ Видалити</a>";
             }
 
-            // Кнопка збереження для GUI (якщо використовується старий режим)
+            /* Save button for GUI mode */
             if (showSaveButton) {
                 html << "<button class='btn btn-save' onclick=\"saveProduct('" 
                      << htmlEscape(escapeJs(p.name)) << "', '" << htmlEscape(escapeJs(p.code)) << "', '" 
@@ -172,8 +191,8 @@ std::string HtmlGenerator::generatePage(
         }
     }
     html << "</div></div>";
-    
-    // JS для GUI
+
+    /* JS bridge for GUI */
     if (showSaveButton) {
         html << R"(
             <script>
@@ -183,7 +202,7 @@ std::string HtmlGenerator::generatePage(
             </script>
         )";
     }
-    
+
     html << "</body></html>";
     return html.str();
 }

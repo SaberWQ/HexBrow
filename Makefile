@@ -2,96 +2,106 @@ CXX = clang++
 CXXFLAGS = -std=c++17 -I src -Wall -Wextra
 LDFLAGS = -lsqlite3 -lcurl
 
-.PHONY: all web mac run restart stop clean info
+APP      = HexBrow.app
+APP_BIN  = $(APP)/Contents/MacOS
+APP_RES  = $(APP)/Contents/Resources
 
-all: web_server HexBrow.app
+.PHONY: all bundle mac web restart stop db-clean favicon clean info
 
-# 1. Збірка сервера
+all: mac
+
+# ============================================================================
+# УКР: Збірка C++ сервера.
+# ENG: Build C++ server.
+# ============================================================================
 web_server: src/cgi_main.cpp src/DatabaseManager.cpp src/NetworkManager.cpp src/HtmlGenerator.cpp
 	$(CXX) $(CXXFLAGS) src/cgi_main.cpp src/DatabaseManager.cpp src/NetworkManager.cpp src/HtmlGenerator.cpp $(LDFLAGS) -o web_server
 
-# Автоматичне створення Info.plist, якщо його немає
-Info.plist:
-	@echo '<?xml version="1.0" encoding="UTF-8"?>' > Info.plist
-	@echo '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' >> Info.plist
-	@echo '<plist version="1.0">' >> Info.plist
-	@echo '<dict>' >> Info.plist
-	@echo '    <key>CFBundleExecutable</key>' >> Info.plist
-	@echo '    <string>HexBrow</string>' >> Info.plist
-	@echo '    <key>CFBundleIdentifier</key>' >> Info.plist
-	@echo '    <string>com.saberwq.hexbrow</string>' >> Info.plist
-	@echo '    <key>CFBundleName</key>' >> Info.plist
-	@echo '    <string>HexBrow</string>' >> Info.plist
-	@echo '    <key>CFBundlePackageType</key>' >> Info.plist
-	@echo '    <string>APPL</string>' >> Info.plist
-	@echo '    <key>NSPrincipalClass</key>' >> Info.plist
-	@echo '    <string>NSApplication</string>' >> Info.plist
-	@echo '    <key>NSHighResolutionCapable</key>' >> Info.plist
-	@echo '    <true/>' >> Info.plist
-	@echo '    <key>NSAppTransportSecurity</key>' >> Info.plist
-	@echo '    <dict>' >> Info.plist
-	@echo '        <key>NSAllowsLocalNetworking</key>' >> Info.plist
-	@echo '        <true/>' >> Info.plist
-	@echo '    </dict>' >> Info.plist
-	@echo '</dict>' >> Info.plist
-	@echo '</plist>' >> Info.plist
+# ============================================================================
+# УКР: Збірка НАТИВНОГО Mac GUI (Cocoa + WebKit).
+# ENG: Build NATIVE Mac GUI (Cocoa + WebKit).
+# ============================================================================
+HexBrowApp: browser.mm
+	$(CXX) $(CXXFLAGS) -fobjc-arc browser.mm -framework Cocoa -framework WebKit -o HexBrowApp
 
-# 2. Збірка GUI (Mac)
-HexBrow.app: browser.mm web_server Info.plist
-	@echo "=== Збірка HexBrow.app ==="
-	mkdir -p HexBrow.app/Contents/MacOS
-	mkdir -p HexBrow.app/Contents/Resources
-	cp Info.plist HexBrow.app/Contents/Info.plist
-	$(CXX) $(CXXFLAGS) -fobjc-arc browser.mm -framework Cocoa -framework WebKit -o HexBrow.app/Contents/MacOS/HexBrow
+# ============================================================================
+# УКР: Збірка КРОСПЛАТФОРМНОГО веб-лаунчера (Windows/Linux).
+# ENG: Build CROSS-PLATFORM web launcher (Windows/Linux).
+# ============================================================================
+HexBrowWeb: main.cpp
+	$(CXX) $(CXXFLAGS) main.cpp -o HexBrowWeb
 
-# 3. Запуск у браузері (Веб-версія)
-web: web_server
-	@echo "=== Зупиняємо старий сервер ==="
+# ============================================================================
+# УКР: Збірка повноцінного .app бандлу з іконкою.
+# ENG: Build full .app bundle with icon.
+# ============================================================================
+bundle: web_server HexBrowApp
+	mkdir -p $(APP_BIN) $(APP_RES)
+	cp macos/Info.plist $(APP)/Contents/Info.plist
+	cp HexBrowApp web_server $(APP_BIN)/
+	cp icons/HexBrow.icns $(APP_RES)/HexBrow.icns
+	touch $(APP)  # Force Finder to refresh icon
+	codesign --force --deep --sign - $(APP) 2>/dev/null || true
+
+# ============================================================================
+# УКР: Запуск нативного Mac додатку.
+# ENG: Run native Mac app.
+# ============================================================================
+mac: bundle
 	@killall web_server 2>/dev/null || true
-	@echo "=== Запускаємо сервер у фоні ==="
-	@./web_server --serve 8080 & sleep 1
-	@echo "=== Відкриваємо браузер ==="
-	@open http://127.0.0.1:8080
+	@killall HexBrowApp 2>/dev/null || true
+	@open $(APP)
 
-# 4. Запуск нативного додатку (Mac)
-mac: HexBrow.app
-	@echo "=== Зупиняємо старий сервер ==="
-	@killall web_server 2>/dev/null || true
-	@echo "=== Відкриваємо HexBrow.app ==="
-	@open HexBrow.app
-
-# 5. За замовчуванням просто запускаємо Mac додаток
-run: mac
-
-# 6. Перезапуск сервера (без відкриття браузера)
-restart: web_server
-	@echo "=== Перезапуск сервера ==="
+# ============================================================================
+# УКР: Запуск веб-версії (для Linux/Windows або тестування в браузері).
+# ENG: Run web version (for Linux/Windows or browser testing).
+# ============================================================================
+web: web_server HexBrowWeb
 	@killall web_server 2>/dev/null || true
 	@./web_server --serve 8080 & sleep 1
-	@echo "✅ Сервер перезапущено на http://127.0.0.1:8080"
+	@./HexBrowWeb
 
-# 7. Зупинка сервера
+# ============================================================================
+# УКР: Генерація Favicon.
+# ENG: Generate Favicon.
+# ============================================================================
+favicon:
+	python3 tools/make_favicon_header.py
+
+# ============================================================================
+# УКР: Очищення БД.
+# ENG: Clean DB.
+# ============================================================================
+db-clean:
+	rm -f products.db
+	@echo "✅ Database removed."
+
+# ============================================================================
+# УКР: Зупинка сервера.
+# ENG: Stop server.
+# ============================================================================
 stop:
-	@echo "=== Зупинка сервера ==="
-	@killall web_server 2>/dev/null || echo "Сервер не запущено."
-	@echo "✅ Сервер зупинено."
+	@killall web_server 2>/dev/null || echo "Server not running."
 
-# 8. Очищення
+# ============================================================================
+# УКР: Очищення артефактів.
+# ENG: Clean artifacts.
+# ============================================================================
 clean:
-	@echo "=== Очищення ==="
-	rm -rf HexBrow.app
-	rm -f web_server HexBrowApp
+	rm -rf $(APP)
+	rm -f web_server HexBrowApp HexBrowWeb
 
-# 9. Інформація про стан
+# ============================================================================
+# УКР: Інформація.
+# ENG: Info.
+# ============================================================================
 info:
-	@echo "=== Статус HexBrow ==="
-	@echo "Сервер запущено:"
-	@pgrep -l web_server || echo "  ❌ Ні"
+	@echo "=== HexBrow Status ==="
+	@pgrep -l web_server || echo "  ❌ Server: not running"
 	@echo ""
-	@echo "Доступні команди:"
-	@echo "  make web      - запустити веб-версію (у браузері)"
-	@echo "  make mac      - запустити нативний додаток macOS"
-	@echo "  make restart  - перезапустити сервер"
-	@echo "  make stop     - зупинити сервер"
-	@echo "  make clean    - видалити збірку"
-	@echo "  make info     - показати цю довідку"
+	@echo "Commands:"
+	@echo "  make mac       - build & run native Mac app"
+	@echo "  make web       - build & run web version"
+	@echo "  make favicon   - regenerate Favicon.h"
+	@echo "  make db-clean  - delete products.db"
+	@echo "  make clean     - remove artifacts"
