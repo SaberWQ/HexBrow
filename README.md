@@ -78,13 +78,13 @@ HexBrow — курсова робота з дисципліни «Програм
       <sub><b>Пошук у зовнішніх API</b></sub>
     </td>
     <td align="center" width="50%">
-      <img src="docs/05-catalog.png" alt="Каталог" width="100%"><br>
+      <img src="docs/05-catalog..png" alt="Каталог" width="100%"><br>
       <sub><b>Каталог товарів (CRUD)</b></sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="50%">
-      <img src="docs/08-profile.png" alt="Профіль" width="100%"><br>
+      <img src="docs/08-profile..png" alt="Профіль" width="100%"><br>
       <sub><b>Профіль користувача</b></sub>
     </td>
     <td align="center" width="50%">
