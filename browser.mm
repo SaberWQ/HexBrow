@@ -82,14 +82,23 @@
     [self.spinner removeFromSuperview];
 }
 
-/*
- * УКР: Запускає web_server як дочірній процес. Спершу вбиває старий.
- * ENG: Starts web_server as a child process. Kills old one first.
- */
+    /* 
+     * УКР: Спочатку шукаємо web_server ВСЕРЕДИНІ бандлу 
+     *      (Contents/MacOS), а потім — поруч із .app.
+     * ENG: First look for web_server INSIDE the bundle 
+     *      (Contents/MacOS), then next to the .app.
+     */
 - (void)startServer {
-    NSString *appPath = [[NSBundle mainBundle] bundlePath];     // .app path
-    NSString *projectPath = [appPath stringByDeletingLastPathComponent];
-    NSString *serverPath = [projectPath stringByAppendingPathComponent:@"web_server"];
+
+    NSString *exeDir = [[[NSBundle mainBundle] executablePath] stringByDeletingLastPathComponent];
+    NSString *serverPath = [exeDir stringByAppendingPathComponent:@"web_server"];
+    
+    if (![[NSFileManager defaultManager] fileExistsAtPath:serverPath]) {
+        // Fallback: next to .app
+        NSString *appPath = [[NSBundle mainBundle] bundlePath];
+        NSString *projectPath = [appPath stringByDeletingLastPathComponent];
+        serverPath = [projectPath stringByAppendingPathComponent:@"web_server"];
+    }
 
     NSLog(@"Looking for server: %@", serverPath);
 
@@ -102,16 +111,16 @@
         return;
     }
 
-    NSTask *killTask = [[NSTask alloc] init];                   // Kill old server
+    NSTask *killTask = [[NSTask alloc] init];
     [killTask setLaunchPath:@"/usr/bin/killall"];
     [killTask setArguments:@[@"web_server"]];
     @try { [killTask launch]; [killTask waitUntilExit]; } @catch (NSException *e) {}
 
-    self.serverTask = [[NSTask alloc] init];                    // Start new server
+    self.serverTask = [[NSTask alloc] init];
     [self.serverTask setLaunchPath:serverPath];
     [self.serverTask setArguments:@[@"--serve", @"8080"]];
 
-    NSPipe *pipe = [NSPipe pipe];                               // Redirect output
+    NSPipe *pipe = [NSPipe pipe];
     [self.serverTask setStandardOutput:pipe];
     [self.serverTask setStandardError:pipe];
 

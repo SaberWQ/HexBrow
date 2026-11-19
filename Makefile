@@ -10,91 +10,56 @@ APP_RES  = $(APP)/Contents/Resources
 
 all: mac
 
-# ============================================================================
-# УКР: Збірка C++ сервера.
-# ENG: Build C++ server.
-# ============================================================================
+# Server (pure C++)
 web_server: src/cgi_main.cpp src/DatabaseManager.cpp src/NetworkManager.cpp src/HtmlGenerator.cpp
 	$(CXX) $(CXXFLAGS) src/cgi_main.cpp src/DatabaseManager.cpp src/NetworkManager.cpp src/HtmlGenerator.cpp $(LDFLAGS) -o web_server
 
-# ============================================================================
-# УКР: Збірка НАТИВНОГО Mac GUI (Cocoa + WebKit).
-# ENG: Build NATIVE Mac GUI (Cocoa + WebKit).
-# ============================================================================
+# Native Mac GUI
 HexBrowApp: browser.mm
 	$(CXX) $(CXXFLAGS) -fobjc-arc browser.mm -framework Cocoa -framework WebKit -o HexBrowApp
 
-# ============================================================================
-# УКР: Збірка КРОСПЛАТФОРМНОГО веб-лаунчера (Windows/Linux).
-# ENG: Build CROSS-PLATFORM web launcher (Windows/Linux).
-# ============================================================================
+# Cross-platform web launcher
 HexBrowWeb: main.cpp
 	$(CXX) $(CXXFLAGS) main.cpp -o HexBrowWeb
 
-# ============================================================================
-# УКР: Збірка повноцінного .app бандлу з іконкою.
-# ENG: Build full .app bundle with icon.
-# ============================================================================
+# Bundle .app with icon
 bundle: web_server HexBrowApp
 	mkdir -p $(APP_BIN) $(APP_RES)
 	cp macos/Info.plist $(APP)/Contents/Info.plist
 	cp HexBrowApp web_server $(APP_BIN)/
 	cp icons/HexBrow.icns $(APP_RES)/HexBrow.icns
-	touch $(APP)  # Force Finder to refresh icon
+	touch $(APP)
 	codesign --force --deep --sign - $(APP) 2>/dev/null || true
 
-# ============================================================================
-# УКР: Запуск нативного Mac додатку.
-# ENG: Run native Mac app.
-# ============================================================================
+# Run native Mac app
 mac: bundle
 	@killall web_server 2>/dev/null || true
 	@killall HexBrowApp 2>/dev/null || true
 	@open $(APP)
 
-# ============================================================================
-# УКР: Запуск веб-версії (для Linux/Windows або тестування в браузері).
-# ENG: Run web version (for Linux/Windows or browser testing).
-# ============================================================================
+# Run web version — ONLY launcher, launcher starts server itself
 web: web_server HexBrowWeb
-	@killall web_server 2>/dev/null || true
-	@./web_server --serve 8080 & sleep 1
 	@./HexBrowWeb
 
-# ============================================================================
-# УКР: Генерація Favicon.
-# ENG: Generate Favicon.
-# ============================================================================
+# Regenerate favicon
 favicon:
 	python3 tools/make_favicon_header.py
 
-# ============================================================================
-# УКР: Очищення БД.
-# ENG: Clean DB.
-# ============================================================================
+# Clean DB
 db-clean:
 	rm -f products.db
 	@echo "✅ Database removed."
 
-# ============================================================================
-# УКР: Зупинка сервера.
-# ENG: Stop server.
-# ============================================================================
+# Stop server
 stop:
 	@killall web_server 2>/dev/null || echo "Server not running."
 
-# ============================================================================
-# УКР: Очищення артефактів.
-# ENG: Clean artifacts.
-# ============================================================================
+# Clean artifacts
 clean:
 	rm -rf $(APP)
 	rm -f web_server HexBrowApp HexBrowWeb
 
-# ============================================================================
-# УКР: Інформація.
-# ENG: Info.
-# ============================================================================
+# Info
 info:
 	@echo "=== HexBrow Status ==="
 	@pgrep -l web_server || echo "  ❌ Server: not running"
