@@ -4,56 +4,54 @@
 #include <algorithm>
 #include <functional>
 
-/* ============================================================================
- * HASH PASSWORD
- * УКР: std::hash для навчальної демонстрації (НЕ для продакшену).
- * ENG: std::hash for educational demo (NOT for production).
- * ============================================================================ */
+/*
+ * УКР: Хеш пароля через std::hash. Для навчального проєкту.
+ *      НЕ використовувати в продакшені — потрібен bcrypt/Argon2.
+ * ENG: Password hash via std::hash. Educational only.
+ *      Do NOT use in production — use bcrypt/Argon2.
+ */
 std::string hashPassword(const std::string& password) {
     std::hash<std::string> hasher;
     return std::to_string(hasher(password));
 }
 
-/* ============================================================================
- * SAFE GET TEXT
- * УКР: Повертає "" якщо NULL.
- * ENG: Returns "" if NULL.
- * ============================================================================ */
+/*
+ * УКР: Безпечне отримання тексту (NULL -> "").
+ * ENG: Safe text extraction (NULL -> "").
+ */
 std::string safeGetText(sqlite3_stmt* stmt, int col) {
     const unsigned char* text = sqlite3_column_text(stmt, col);
     return text ? reinterpret_cast<const char*>(text) : "";
 }
 
-/* ============================================================================
- * LOWER_UTF8 — case-insensitive search for Cyrillic
- * ============================================================================
- * УКР: Переводить UTF-8 рядок у нижній регістр.
- *      SQLite LIKE нечутливий до регістру лише для ASCII.
- *      Тому ми реєструємо власну SQL-функцію lower_utf8.
- * ENG: Converts a UTF-8 string to lowercase.
- *      SQLite LIKE is case-insensitive only for ASCII.
- *      So we register a custom SQL function lower_utf8.
- * ============================================================================ */
+/*
+ * УКР: Переведення UTF-8 рядка в нижній регістр для кирилиці.
+ * ENG: UTF-8 lowercase conversion for Cyrillic.
+ */
 std::string toLowerUtf8(const std::string& s) {
     std::string r = s;
     for (size_t i = 0; i < r.size(); ++i) {
         unsigned char c = r[i];
-        if (c >= 'A' && c <= 'Z') { r[i] = c + 32; continue; }  // ASCII A-Z
-        if (c == 0xD0 && i + 1 < r.size()) {                    // Cyrillic А-Я
+        if (c >= 'A' && c <= 'Z') { r[i] = c + 32; continue; }
+        if (c == 0xD0 && i + 1 < r.size()) {
             unsigned char c2 = r[i + 1];
-            if (c2 >= 0x90 && c2 <= 0x9F)      { r[i + 1] = c2 + 0x20; }           // А-П
-            else if (c2 >= 0xA0 && c2 <= 0xAF) { r[i] = 0xD1; r[i + 1] = c2 - 0x20; } // Р-Я
-            else if (c2 == 0x86)               { r[i] = 0xD1; r[i + 1] = 0x96; }   // І
-            else if (c2 == 0x87)               { r[i] = 0xD1; r[i + 1] = 0x97; }   // Ї
-            else if (c2 == 0x84)               { r[i] = 0xD1; r[i + 1] = 0x94; }   // Є
+            if (c2 >= 0x90 && c2 <= 0x9F)      { r[i + 1] = c2 + 0x20; }
+            else if (c2 >= 0xA0 && c2 <= 0xAF) { r[i] = 0xD1; r[i + 1] = c2 - 0x20; }
+            else if (c2 == 0x86)               { r[i] = 0xD1; r[i + 1] = 0x96; }
+            else if (c2 == 0x87)               { r[i] = 0xD1; r[i + 1] = 0x97; }
+            else if (c2 == 0x84)               { r[i] = 0xD1; r[i + 1] = 0x94; }
             ++i;
         } else if (c == 0xD2 && i + 1 < r.size() && (unsigned char)r[i + 1] == 0x90) {
-            r[i + 1] = 0x91; ++i;                                                   // Ґ
+            r[i + 1] = 0x91; ++i;
         }
     }
     return r;
 }
 
+/*
+ * УКР: SQL-функція lower_utf8 для реєстронезалежного LIKE.
+ * ENG: SQL lower_utf8 function for case-insensitive LIKE.
+ */
 static void lower_utf8_func(sqlite3_context *context, int argc, sqlite3_value **argv) {
     if (argc == 1) {
         const unsigned char *text = sqlite3_value_text(argv[0]);
@@ -67,11 +65,10 @@ static void lower_utf8_func(sqlite3_context *context, int argc, sqlite3_value **
     sqlite3_result_null(context);
 }
 
-/* ============================================================================
- * ESCAPE LIKE
- * УКР: Екранує %, _ та \ для LIKE-запиту.
- * ENG: Escapes %, _, and \ for LIKE queries.
- * ============================================================================ */
+/*
+ * УКР: Екранування % _ \ для LIKE.
+ * ENG: Escape % _ \ for LIKE.
+ */
 std::string escapeLike(const std::string& input) {
     std::string result;
     for (char c : input) {
@@ -81,9 +78,6 @@ std::string escapeLike(const std::string& input) {
     return result;
 }
 
-/* ============================================================================
- * CONSTRUCTOR / DESTRUCTOR
- * ============================================================================ */
 DatabaseManager::DatabaseManager(const std::string& dbPath) : m_db(nullptr) {
     if (sqlite3_open(dbPath.c_str(), &m_db) != SQLITE_OK) {
         if (m_db) sqlite3_close(m_db);
@@ -96,45 +90,66 @@ DatabaseManager::~DatabaseManager() {
     if (m_db) sqlite3_close(m_db);
 }
 
-/* ============================================================================
- * MIGRATE + INITIALIZE
- * ============================================================================ */
+/*
+ * УКР: Міграція БД — додає відсутні колонки через ALTER TABLE.
+ *      НІКОЛИ не видаляє таблиці, зберігає всі дані.
+ * ENG: DB migration — adds missing columns via ALTER TABLE.
+ *      NEVER drops tables, preserves all data.
+ */
 void DatabaseManager::migrateDatabase() {
-    const char* columnsToAdd[] = {"imageUrl TEXT", "price TEXT", "link TEXT", "isFavorite INTEGER DEFAULT 0", "owner_id INTEGER DEFAULT 0"};
-    for (const char* colDef : columnsToAdd) {
-        std::string sql = "ALTER TABLE products ADD COLUMN " + std::string(colDef) + ";";
-        sqlite3_exec(m_db, sql.c_str(), nullptr, nullptr, nullptr);
-    }
-    sqlite3_exec(m_db, "ALTER TABLE users ADD COLUMN avatar TEXT;", nullptr, nullptr, nullptr);
-    sqlite3_exec(m_db, "ALTER TABLE users ADD COLUMN description TEXT;", nullptr, nullptr, nullptr);
-    sqlite3_exec(m_db, "ALTER TABLE users ADD COLUMN email TEXT;", nullptr, nullptr, nullptr);
+    /* Helper: check if column exists */
+    auto columnExists = [this](const std::string& table, const std::string& col) -> bool {
+        sqlite3_stmt* st;
+        bool exists = false;
+        std::string sql = "PRAGMA table_info(" + table + ");";
+        if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &st, nullptr) == SQLITE_OK) {
+            while (sqlite3_step(st) == SQLITE_ROW) {
+                if (safeGetText(st, 1) == col) { exists = true; break; }
+            }
+            sqlite3_finalize(st);
+        }
+        return exists;
+    };
+
+    /* Products: add missing columns, never drop */
+    if (!columnExists("products", "imageUrl"))   sqlite3_exec(m_db, "ALTER TABLE products ADD COLUMN imageUrl TEXT;", 0, 0, 0);
+    if (!columnExists("products", "price"))      sqlite3_exec(m_db, "ALTER TABLE products ADD COLUMN price TEXT;", 0, 0, 0);
+    if (!columnExists("products", "link"))       sqlite3_exec(m_db, "ALTER TABLE products ADD COLUMN link TEXT;", 0, 0, 0);
+    if (!columnExists("products", "isFavorite")) sqlite3_exec(m_db, "ALTER TABLE products ADD COLUMN isFavorite INTEGER DEFAULT 0;", 0, 0, 0);
+    if (!columnExists("products", "owner_id"))   sqlite3_exec(m_db, "ALTER TABLE products ADD COLUMN owner_id INTEGER DEFAULT 0;", 0, 0, 0);
+
+    /* Users: add missing columns, never drop */
+    if (!columnExists("users", "email"))       sqlite3_exec(m_db, "ALTER TABLE users ADD COLUMN email TEXT;", 0, 0, 0);
+    if (!columnExists("users", "avatar"))      sqlite3_exec(m_db, "ALTER TABLE users ADD COLUMN avatar TEXT;", 0, 0, 0);
+    if (!columnExists("users", "description")) sqlite3_exec(m_db, "ALTER TABLE users ADD COLUMN description TEXT;", 0, 0, 0);
+
+    /* Unique index on email (old users have NULL email, so no conflict) */
+    sqlite3_exec(m_db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);", 0, 0, 0);
 }
 
+/*
+ * УКР: Ініціалізація. Створює таблиці (якщо немає) і виконує міграцію.
+ *      Не видаляє жодних даних.
+ * ENG: Initialization. Creates tables (if missing) and runs migration.
+ *      Never deletes any data.
+ */
 void DatabaseManager::initialize() {
-    bool needMigration = false;
-    sqlite3_stmt* stmt;
-    if (sqlite3_prepare_v2(m_db, "PRAGMA table_info(users);", -1, &stmt, nullptr) == SQLITE_OK) {
-        bool hasEmail = false;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            if (safeGetText(stmt, 1) == "email") hasEmail = true;
-        }
-        sqlite3_finalize(stmt);
-        if (!hasEmail) needMigration = true;
-    }
-    if (needMigration) {
-        std::cout << "Old schema, dropping users table.\n";
-        sqlite3_exec(m_db, "DROP TABLE IF EXISTS users;", nullptr, nullptr, nullptr);
-    }
+    /* Create base tables if they don't exist */
     const char* sqlCreate = 
-        "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, code TEXT, manufacturer TEXT, description TEXT);"
-        "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, email TEXT UNIQUE, password TEXT);";
+        "CREATE TABLE IF NOT EXISTS products ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "name TEXT NOT NULL, code TEXT NOT NULL, "
+        "manufacturer TEXT NOT NULL, description TEXT);"
+        "CREATE TABLE IF NOT EXISTS users ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "username TEXT, password TEXT);";
     sqlite3_exec(m_db, sqlCreate, nullptr, nullptr, nullptr);
+
+    /* Add all missing columns via ALTER TABLE */
     migrateDatabase();
 }
 
-/* ============================================================================
- * PRODUCTS CRUD
- * ============================================================================ */
+/* ==================== PRODUCTS CRUD ==================== */
 bool DatabaseManager::addProduct(const Product& product) {
     const char* sql = "INSERT INTO products (name, code, manufacturer, description, imageUrl, price, link, isFavorite, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
     sqlite3_stmt* stmt;
@@ -199,14 +214,18 @@ std::vector<Product> DatabaseManager::getAllProducts() const {
             p.owner_id = sqlite3_column_int(stmt, 9);
             results.push_back(p);
         }
+        /* УКР: Завершення роботи з підготовленим виразом.
+         * ENG: Finalize the prepared statement.
+         */
         sqlite3_finalize(stmt);
     }
     return results;
 }
 
-/* ============================================================================
- * SEARCH — case-insensitive for Cyrillic + ESCAPE for % and _
- * ============================================================================ */
+/*
+ * УКР: Пошук — реєстронезалежний для кирилиці, з ESCAPE.
+ * ENG: Search — case-insensitive for Cyrillic, with ESCAPE.
+ */
 std::vector<Product> DatabaseManager::searchProducts(const std::string& query) const {
     std::vector<Product> results;
     std::string sql = "SELECT id, name, code, manufacturer, description, imageUrl, price, link, isFavorite, owner_id FROM products";
@@ -264,9 +283,7 @@ Product DatabaseManager::getProductById(int id) const {
     return p;
 }
 
-/* ============================================================================
- * USERS CRUD
- * ============================================================================ */
+/* ==================== USERS CRUD ==================== */
 bool DatabaseManager::registerUser(const std::string& nickname, const std::string& email, const std::string& password) {
     const char* sql = "INSERT INTO users (username, email, password) VALUES (?, ?, ?);";
     sqlite3_stmt* stmt;

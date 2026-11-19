@@ -10,7 +10,7 @@ APP_RES  = $(APP)/Contents/Resources
 
 all: mac
 
-# Server (pure C++)
+# Server
 web_server: src/cgi_main.cpp src/DatabaseManager.cpp src/NetworkManager.cpp src/HtmlGenerator.cpp
 	$(CXX) $(CXXFLAGS) src/cgi_main.cpp src/DatabaseManager.cpp src/NetworkManager.cpp src/HtmlGenerator.cpp $(LDFLAGS) -o web_server
 
@@ -18,7 +18,7 @@ web_server: src/cgi_main.cpp src/DatabaseManager.cpp src/NetworkManager.cpp src/
 HexBrowApp: browser.mm
 	$(CXX) $(CXXFLAGS) -fobjc-arc browser.mm -framework Cocoa -framework WebKit -o HexBrowApp
 
-# Cross-platform web launcher
+# Cross-platform launcher
 HexBrowWeb: main.cpp
 	$(CXX) $(CXXFLAGS) main.cpp -o HexBrowWeb
 
@@ -31,28 +31,35 @@ bundle: web_server HexBrowApp
 	touch $(APP)
 	codesign --force --deep --sign - $(APP) 2>/dev/null || true
 
-# Run native Mac app
+# Native Mac app
 mac: bundle
 	@killall web_server 2>/dev/null || true
 	@killall HexBrowApp 2>/dev/null || true
 	@open $(APP)
 
-# Run web version — ONLY launcher, launcher starts server itself
+# Web launcher (server started by launcher, not here)
 web: web_server HexBrowWeb
 	@./HexBrowWeb
+
+# Restart server only (no browser)
+restart: web_server
+	@killall web_server 2>/dev/null || true
+	@./web_server --serve 8080 &
+	@sleep 1
+	@echo "✅ Server restarted on http://127.0.0.1:8080"
+
+# Stop server
+stop:
+	@killall web_server 2>/dev/null || echo "Server not running."
 
 # Regenerate favicon
 favicon:
 	python3 tools/make_favicon_header.py
 
-# Clean DB
+# Delete database
 db-clean:
 	rm -f products.db
 	@echo "✅ Database removed."
-
-# Stop server
-stop:
-	@killall web_server 2>/dev/null || echo "Server not running."
 
 # Clean artifacts
 clean:
@@ -67,6 +74,8 @@ info:
 	@echo "Commands:"
 	@echo "  make mac       - build & run native Mac app"
 	@echo "  make web       - build & run web version"
+	@echo "  make restart   - restart server only"
+	@echo "  make stop      - stop server"
 	@echo "  make favicon   - regenerate Favicon.h"
 	@echo "  make db-clean  - delete products.db"
 	@echo "  make clean     - remove artifacts"
