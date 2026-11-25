@@ -7,6 +7,25 @@
 #include <iomanip>
 #include <random>
 
+
+
+/* ============================================================================
+ * ANDROID STUB
+ * УКР: libcurl не входить у стандартний NDK. На Android пошук в інтернеті
+ *      вимкнено. Локальний пошук і CRUD працюють повноцінно.
+ * ENG: libcurl is not part of the NDK. Internet search is disabled on Android.
+ *      Local search and CRUD work fully.
+ * ============================================================================ */
+#ifdef ANDROID
+std::vector<Product> NetworkManager::fetchInternetProducts(const std::string& query, int skip, int limit) {
+    return {};  // Empty result on Android
+}
+#else
+// ============ DESKTOP IMPLEMENTATION (existing code) ============
+#include <curl/curl.h>
+#include "json.hpp"
+// ... (весь ваш існуючий код NetworkManager.cpp залишається тут)
+#endif
 using json = nlohmann::json;
 
 /*

@@ -17,6 +17,8 @@ static/
 
 # IDE
 .vscode/
+.gradle/
+.idea/
 
 # Archives
 *.zip

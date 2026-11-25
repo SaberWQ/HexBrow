@@ -81,44 +81,51 @@
     [self.spinner stopAnimation:nil];
     [self.spinner removeFromSuperview];
 }
-
-    /* 
-     * УКР: Спочатку шукаємо web_server ВСЕРЕДИНІ бандлу 
-     *      (Contents/MacOS), а потім — поруч із .app.
-     * ENG: First look for web_server INSIDE the bundle 
-     *      (Contents/MacOS), then next to the .app.
-     */
 - (void)startServer {
-
+    /*
+     * УКР: Знаходимо web_server у Contents/MacOS, або поруч з .app.
+     *      Встановлюємо робочу директорію, щоб products.db створювалась
+     *      поруч із сервером, а не в корені диска (/).
+     * ENG: Find web_server in Contents/MacOS or next to .app.
+     *      Set the working directory so products.db is created
+     *      next to the server, not at disk root (/).
+     */
     NSString *exeDir = [[[NSBundle mainBundle] executablePath] stringByDeletingLastPathComponent];
     NSString *serverPath = [exeDir stringByAppendingPathComponent:@"web_server"];
-    
+
+    // Fallback: next to .app (if not inside bundle)
     if (![[NSFileManager defaultManager] fileExistsAtPath:serverPath]) {
-        // Fallback: next to .app
         NSString *appPath = [[NSBundle mainBundle] bundlePath];
         NSString *projectPath = [appPath stringByDeletingLastPathComponent];
         serverPath = [projectPath stringByAppendingPathComponent:@"web_server"];
     }
 
-    NSLog(@"Looking for server: %@", serverPath);
+    NSLog(@"Шукаємо сервер: %@", serverPath);
 
     if (![[NSFileManager defaultManager] fileExistsAtPath:serverPath]) {
         NSAlert *alert = [[NSAlert alloc] init];
         [alert setMessageText:@"Launch error"];
-        [alert setInformativeText:@"web_server not found. Run 'make' in terminal."];
+        [alert setInformativeText:@"web_server not found. Run 'make build' first."];
         [alert setAlertStyle:NSAlertStyleCritical];
         [alert runModal];
         return;
     }
 
+    // Kill old server
     NSTask *killTask = [[NSTask alloc] init];
     [killTask setLaunchPath:@"/usr/bin/killall"];
     [killTask setArguments:@[@"web_server"]];
     @try { [killTask launch]; [killTask waitUntilExit]; } @catch (NSException *e) {}
 
+    // Start new server
     self.serverTask = [[NSTask alloc] init];
     [self.serverTask setLaunchPath:serverPath];
     [self.serverTask setArguments:@[@"--serve", @"8080"]];
+    
+    // УКР: Встановлюємо робочу директорію (де лежить web_server)
+    // ENG: Set the working directory (where web_server is)
+    NSString *workingDir = [serverPath stringByDeletingLastPathComponent];
+    [self.serverTask setCurrentDirectoryPath:workingDir];
 
     NSPipe *pipe = [NSPipe pipe];
     [self.serverTask setStandardOutput:pipe];
@@ -126,9 +133,9 @@
 
     @try {
         [self.serverTask launch];
-        NSLog(@"Server started with PID: %d", self.serverTask.processIdentifier);
+        NSLog(@"Сервер запущено. Робоча директорія: %@", workingDir);
     } @catch (NSException *exception) {
-        NSLog(@"ERROR: %@", exception);
+        NSLog(@"ПОМИЛКА: %@", exception);
     }
 }
 

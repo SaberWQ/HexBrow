@@ -44,19 +44,21 @@
   * УКР: Різні API для Windows (Winsock) та Unix (POSIX).
   * ENG: Different APIs for Windows (Winsock) and Unix (POSIX).
   * ============================================================================ */
- #ifdef _WIN32
-     #include <winsock2.h>
-     #include <ws2tcpip.h>
-     #pragma comment(lib, "ws2_32.lib")                        // Auto-link Winsock library
-     #include <direct.h>                                       // For _mkdir()
-     typedef SOCKET socket_t;                                  // Windows socket type
- #else
-     #include <sys/socket.h>
-     #include <netinet/in.h>
-     #include <unistd.h>
-     #include <arpa/inet.h>
-     typedef int socket_t;                                     // Unix socket type
- #endif
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #ifdef _MSC_VER
+        #pragma comment(lib, "ws2_32.lib")
+    #endif
+    #include <direct.h>
+    typedef SOCKET socket_t;
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <unistd.h>
+    #include <arpa/inet.h>
+    typedef int socket_t;
+#endif
  
  namespace fs = std::filesystem;
  
@@ -373,10 +375,17 @@
   *      - SIGPIPE ignored (server doesn't crash when client disconnects).
   *      - Absolute paths to products.db and static/.
   */
- void runServer(int port, const char* argv0) {
-     /* Store executable directory for absolute paths */
-     globalExeDir = fs::path(argv0).parent_path().string();
- 
+ void runServer(int port, const char* bindAddr, const char* argv0) {
+    /* 
+     * УКР: Якщо globalExeDir вже встановлено (наприклад, з Android JNI),
+     *      ми не перезаписуємо його. Інакше — беремо шлях від argv0.
+     * ENG: If globalExeDir is already set (e.g., from Android JNI),
+     *      do not overwrite it. Otherwise — use the argv0 path.
+     */
+    if (globalExeDir.empty()) {
+        globalExeDir = fs::path(argv0).parent_path().string();
+    }
+    
      /* Create static/ directory for uploaded images */
      std::string staticDir = getAbsolutePath("static");
  #ifdef _WIN32
@@ -406,7 +415,7 @@
  
      /* Bind to localhost only (security: not accessible from network) */
      address.sin_family = AF_INET;
-     address.sin_addr.s_addr = inet_addr("127.0.0.1");         // Localhost only
+     address.sin_addr.s_addr = inet_addr(bindAddr);        // Localhost only
      address.sin_port = htons(port);                           // Network byte order
      if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) return;
  
@@ -419,7 +428,11 @@
  
      /* ============ MAIN ACCEPT LOOP ============ */
      while (true) {
-         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) continue;
+        #ifdef _WIN32
+            if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) == INVALID_SOCKET) continue;
+        #else
+            if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) continue;
+        #endif
  
          /* ============ READ HTTP REQUEST ============ */
          /*
@@ -526,8 +539,24 @@
          }
  
          /* Connect to database for all dynamic routes */
-         DatabaseManager db(getAbsolutePath("products.db"));
-         db.initialize();
+         DatabaseManager* db_ptr = nullptr;
+         try {
+             db_ptr = new DatabaseManager(getAbsolutePath("products.db"));
+             db_ptr->initialize();
+         } catch (const std::exception& e) {
+             std::cerr << "DB ERROR: " << e.what() << "\n";
+             std::string errHtml = "<h1>Database Error</h1><p>" + std::string(e.what()) + "</p>";
+             errHtml += "<p>Path: " + getAbsolutePath("products.db") + "</p>";
+             std::string resp = "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n" + errHtml;
+             sendAll(new_socket, resp);
+#ifdef _WIN32
+             closesocket(new_socket);
+#else
+             close(new_socket);
+#endif
+             continue;
+         }
+         DatabaseManager& db = *db_ptr;
  
          /* ============ ROUTE: / (home) ============ */
          if (basePath == "/" || basePath.empty()) {
@@ -801,35 +830,40 @@
  #endif
      }
  }
- 
- /* ============================================================================
-  * ENTRY POINT
-  * ============================================================================
-  * УКР: Визначає режим роботи:
-  *      - якщо є змінна оточення REQUEST_METHOD — CGI-режим (Apache).
-  *      - якщо аргумент --serve <port> — Standalone HTTP-сервер.
-  *
-  * ENG: Determines the operating mode:
-  *      - if REQUEST_METHOD env var is set — CGI mode (Apache).
-  *      - if --serve <port> argument is passed — Standalone HTTP server.
-  * ============================================================================ */
- int main(int argc, char* argv[]) {
-     /* CGI mode: Apache sets REQUEST_METHOD */
-     if (std::getenv("REQUEST_METHOD") != nullptr) {
-         runCgi();                                             // Run as CGI
-         return 0;
-     }
- 
-     /* Standalone mode: --serve 8080 */
-     if (argc > 1 && std::string(argv[1]) == "--serve") {
-         int port = (argc > 2) ? std::atoi(argv[2]) : 8080;   // Default port 8080
-         runServer(port, argv[0]);
-         return 0;
-     }
- 
-     /* No arguments — print usage */
-     std::cout << "Usage:\n";
-     std::cout << "  " << argv[0] << " --serve <port>   # Standalone HTTP server\n";
-     std::cout << "  REQUEST_METHOD=GET " << argv[0] << "  # CGI mode\n";
-     return 0;
- }
+
+ /*
+ * ============================================================================
+ * ENTRY POINT
+ * ============================================================================
+ * УКР: Режими роботи:
+ *      1) CGI — якщо є змінна оточення REQUEST_METHOD.
+ *      2) Standalone — прапорці --serve <port> та --bind <addr>.
+ *
+ * ENG: Operating modes:
+ *      1) CGI — if REQUEST_METHOD env var is set.
+ *      2) Standalone — flags --serve <port> and --bind <addr>.
+ * ============================================================================
+ */
+int main(int argc, char* argv[]) {
+    /* CGI mode: Apache sets REQUEST_METHOD */
+    if (std::getenv("REQUEST_METHOD") != nullptr) {
+        runCgi();
+        return 0;
+    }
+
+    /* Standalone mode with optional --serve and --bind */
+    int port = 8080;
+    std::string bindAddr = "127.0.0.1";                       // Default: localhost only
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--serve" && i + 1 < argc) {
+            port = std::atoi(argv[++i]);
+        } else if (arg == "--bind" && i + 1 < argc) {
+            bindAddr = argv[++i];
+        }
+    }
+
+    runServer(port, bindAddr.c_str(), argv[0]);               // 3 args now
+    return 0;
+}

@@ -8,55 +8,53 @@
 #include <mach-o/dyld.h>
 #include <climits>
 #include <unistd.h>
+#elif _WIN32
+#include <windows.h>
 #endif
 
-/*
- * УКР: Змінює поточну директорію на ту, де лежить бінарник.
- *      Це потрібно, щоб лаунчер знайшов web_server при подвійному кліку на .app.
- * ENG: Changes current directory to the binary's directory.
- *      Needed so the launcher finds web_server on double-click of .app.
- */
 static void chdirToExecutableDir() {
 #ifdef __APPLE__
     char buf[PATH_MAX];
     uint32_t size = sizeof(buf);
-    if (_NSGetExecutablePath(buf, &size) == 0) {                // Get exe path
+    if (_NSGetExecutablePath(buf, &size) == 0) {
         char real[PATH_MAX];
-        if (realpath(buf, real)) {                              // Resolve symlinks
-            std::filesystem::current_path(std::filesystem::path(real).parent_path()); // chdir
+        if (realpath(buf, real)) {
+            std::error_code ec;
+            std::filesystem::current_path(std::filesystem::path(real).parent_path(), ec);
+            if (ec) std::cerr << "chdir failed: " << ec.message() << "\n";
         }
     }
+#elif _WIN32
+    char buf[MAX_PATH];
+    GetModuleFileNameA(NULL, buf, MAX_PATH);
+    std::error_code ec;
+    std::filesystem::current_path(std::filesystem::path(buf).parent_path(), ec);
 #endif
 }
 
-/*
- * УКР: Кросплатформний лаунчер. Зупиняє старий сервер, запускає новий,
- *      відкриває браузер.
- * ENG: Cross-platform launcher. Stops old server, starts new one,
- *      opens browser.
- */
 int main() {
-    chdirToExecutableDir();                                     // chdir to exe dir
+    chdirToExecutableDir();                                     // CWD = folder with HexBrowWeb
 
-    /* Step 1: kill old server */
 #ifdef _WIN32
-    std::system("taskkill /F /IM web_server.exe /T 2>nul");
+    std::system("taskkill /F /IM web_server.exe >nul 2>&1");    // Windows kill
 #else
-    std::system("killall web_server 2>/dev/null");              // Ignore error
+    std::system("killall web_server 2>/dev/null");              // Mac/Linux kill
 #endif
-    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // Wait
 
-    /* Step 2: start new server in background */
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
     std::cout << "Starting HexBrow server...\n";
+
 #ifdef _WIN32
-    std::system("start /B web_server.exe --serve 8080");
+    // На Windows запускаємо без ./, використовуємо start /B для фону
+    std::system("start /B web_server.exe --serve 8080");        
 #else
-    std::system("./web_server --serve 8080 &");                 // Background
+    // На Mac/Linux залишаємо як було
+    std::system("./web_server --serve 8080 &");                 
 #endif
 
-    std::this_thread::sleep_for(std::chrono::seconds(1));       // Wait for startup
+    std::this_thread::sleep_for(std::chrono::seconds(1));
 
-    /* Step 3: open browser */
     std::cout << "Opening browser...\n";
 #ifdef _WIN32
     std::system("start http://127.0.0.1:8080");
